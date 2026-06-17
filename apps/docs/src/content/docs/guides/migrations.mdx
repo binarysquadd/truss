@@ -1,0 +1,285 @@
+---
+title: Database Migrations
+description: Run, preview, and manage database migrations with safety checks and multi-framework support.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Truss includes a migration runner that supports both Truss's own node-pg-migrate migrations and idempotent migrations from any framework. The dashboard provides a visual migration manager with safety checks, SQL preview, schema detection, and one-click execution.
+
+## Overview
+
+Truss offers two migration modes:
+
+1. **Standard migrations** — node-pg-migrate CJS files in `apps/api/db/migrations/`. These run sequentially and are tracked in the `pgmigrations` table.
+2. **Idempotent migrations** — framework-agnostic mode that auto-detects tracking tables from 16+ migration frameworks and lets you run, mark as applied, or preview any pending migration.
+
+---
+
+## CLI Commands
+
+For local development, use the npm scripts:
+
+```bash
+# Create a new migration file
+npm run migrate:create -- add-user-roles
+
+# Run all pending migrations
+npm run migrate:up
+
+# Rollback the last migration
+npm run migrate:down
+
+# Rollback and re-apply the last migration
+npm run migrate:redo
+```
+
+Migration files are created in `apps/api/db/migrations/` as CJS files with `exports.up` and `exports.down` functions.
+
+---
+
+## Safety Checks
+
+Before running migrations, check for potential issues:
+
+```bash
+curl -X POST http://localhost:8787/api/migrations/check
+```
+
+Response:
+
+```json
+{
+  "database": "truss",
+  "user": "postgres",
+  "pendingCount": 3,
+  "pendingFiles": [
+    "001_create-users.cjs",
+    "002_add-indexes.cjs",
+    "003_create-roles.cjs"
+  ],
+  "lockCount": 0,
+  "activeTxCount": 1,
+  "warnings": [],
+  "safe": true
+}
+```
+
+The safety check inspects:
+
+| Check | Description |
+|-------|-------------|
+| **Pending count** | How many migrations need to be applied |
+| **Lock detection** | Queries `pg_locks` for waiting locks that could block or be blocked by DDL |
+| **Active transactions** | Counts non-idle transactions — running migrations during high activity can cause locks |
+| **Database/user info** | Confirms which database and role will run the migrations |
+
+Warnings are generated when:
+- Waiting locks are detected (migrations may deadlock)
+- More than 3 active transactions exist (consider running during low traffic)
+- No pending migrations exist (nothing to do)
+
+The `safe` field is `true` only when there are no warnings.
+
+---
+
+## Preview a Migration
+
+View the SQL content of any migration file before running it:
+
+```bash
+curl http://localhost:8787/api/migrations/preview/001_create-users.cjs
+```
+
+Response:
+
+```json
+{
+  "filename": "001_create-users.cjs",
+  "content": "exports.up = (pgm) => {\n  pgm.createTable('users', {\n    id: 'id',\n    ...\n  });\n};\n\nexports.down = (pgm) => {\n  pgm.dropTable('users');\n};",
+  "lines": 15
+}
+```
+
+This lets you review exactly what each migration will do before executing it.
+
+---
+
+## Idempotent Migration Runner
+
+The idempotent runner is designed for production environments where you need to safely apply migrations that may have already been partially applied, or where you use a migration framework other than node-pg-migrate.
+
+### Detect Framework
+
+Truss auto-detects which migration framework you use by scanning for known tracking tables:
+
+| Framework | Tracking Table |
+|-----------|---------------|
+| node-pg-migrate | `public.pgmigrations` |
+| golang-migrate / Tern / Atlas | `public.schema_migrations` |
+| Prisma | `public._migrations` |
+| Knex.js | `public.knex_migrations` |
+| Drizzle ORM | `drizzle.__drizzle_migrations` |
+| SQLx (Rust) | `public._sqlx_migrations` |
+| Alembic (Python) | `public.alembic_version` |
+| Django | `public.django_migrations` |
+| Rails ActiveRecord | `public.schema_migrations` |
+| TypeORM | `public.typeorm_metadata` |
+| Laravel | `public.migrations` |
+| Sequelize | `public.sequelize_meta` |
+| Flyway | `public.flyway_schema_history` |
+
+### Check Status
+
+```bash
+curl http://localhost:8787/api/migrations/idempotent/status
+```
+
+Response:
+
+```json
+{
+  "framework": "node-pg-migrate",
+  "tracking_table": "public.pgmigrations",
+  "detected_tables": [
+    { "schema": "public", "table": "pgmigrations", "framework": "node-pg-migrate" }
+  ],
+  "migrations": [
+    {
+      "name": "001_create-users.cjs",
+      "state": "applied",
+      "applied_at": "2025-01-10T12:00:00Z",
+      "stored_hash": null,
+      "file_hash": "a1b2c3..."
+    },
+    {
+      "name": "002_add-indexes.cjs",
+      "state": "pending",
+      "applied_at": null,
+      "stored_hash": null,
+      "file_hash": "d4e5f6..."
+    }
+  ],
+  "summary": {
+    "applied": 1,
+    "pending": 1,
+    "modified": 0,
+    "orphaned": 0
+  }
+}
+```
+
+Each migration has one of four states:
+
+| State | Meaning |
+|-------|---------|
+| `applied` | Recorded in the tracking table and file exists |
+| `pending` | File exists but not yet recorded as applied |
+| `modified` | Applied, but the file content has changed since (hash mismatch) |
+| `orphaned` | Recorded as applied, but the file no longer exists |
+
+### Run Pending Migrations
+
+```bash
+# Run all pending migrations
+curl -X POST http://localhost:8787/api/migrations/idempotent/run
+
+# Run specific migrations only
+curl -X POST http://localhost:8787/api/migrations/idempotent/run \
+  -H "Content-Type: application/json" \
+  -d '{"migrations": ["002_add-indexes.cjs"]}'
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "summary": "Applied 1 migration(s) successfully.",
+  "applied": [
+    { "name": "002_add-indexes.cjs", "hash": "d4e5f6..." }
+  ],
+  "failed": null
+}
+```
+
+For `.sql` files, migrations run inside a single transaction. If any migration fails, the entire batch is rolled back. For `.cjs` files, node-pg-migrate handles execution.
+
+On failure:
+
+```json
+{
+  "ok": false,
+  "summary": "Migration \"003_bad-query.sql\" failed — entire batch rolled back.",
+  "applied": [],
+  "failed": {
+    "name": "003_bad-query.sql",
+    "error": "relation \"nonexistent\" does not exist",
+    "statement": "...excerpt around the failing line..."
+  }
+}
+```
+
+### Mark as Applied Without Running
+
+If a migration was already applied manually or through another tool, mark it as applied without executing it:
+
+```bash
+curl -X POST http://localhost:8787/api/migrations/idempotent/mark-applied \
+  -H "Content-Type: application/json" \
+  -d '{"migration": "001_create-users.cjs"}'
+```
+
+This records the migration in the tracking table so it won't be run again.
+
+### Schema Detection
+
+Before running a migration, check whether its DDL objects already exist in the database:
+
+```bash
+curl -X POST http://localhost:8787/api/migrations/idempotent/detect-schema \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "CREATE TABLE users (id serial PRIMARY KEY, name text); CREATE INDEX idx_users_name ON users (name);"}'
+```
+
+Response:
+
+```json
+{
+  "findings": [
+    { "type": "table", "name": "public.users", "exists": true },
+    { "type": "index", "name": "idx_users_name", "exists": true }
+  ],
+  "all_objects_exist": true,
+  "some_objects_exist": true,
+  "recommendation": "All DDL objects already exist. Safe to mark as applied without re-running."
+}
+```
+
+The detector parses `CREATE TABLE`, `CREATE INDEX`, `CREATE FUNCTION`, and `CREATE TYPE` statements and checks if they already exist. This prevents errors from re-running DDL that was already applied.
+
+---
+
+## Dashboard
+
+The **Database > Migrations** panel in the dashboard provides:
+
+- **Migration list** — all files with status badges (applied, pending, modified, orphaned)
+- **Safety check** — one-click pre-flight check showing locks, active transactions, and warnings
+- **SQL preview** — view the full content of any migration file with syntax highlighting
+- **Run button** — execute pending migrations with confirmation dialog
+- **Mark as applied** — skip execution for migrations already applied through other means
+- **Schema detection** — analyze a migration's DDL to check if objects already exist
+
+---
+
+## API Reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/migrations/check` | Run safety checks (locks, active txns, pending count) |
+| `GET` | `/api/migrations/preview/:filename` | Preview migration file content |
+| `GET` | `/api/migrations/idempotent/status` | Full migration status with framework detection |
+| `POST` | `/api/migrations/idempotent/run` | Run pending migrations (transactional for SQL) |
+| `POST` | `/api/migrations/idempotent/mark-applied` | Mark a migration as applied without executing |
+| `POST` | `/api/migrations/idempotent/detect-schema` | Check if DDL objects already exist |

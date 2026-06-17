@@ -1,0 +1,240 @@
+---
+title: Database Branching & Backups
+description: Create isolated database branches for testing and manage backups with point-in-time recovery.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Truss lets you create isolated copies of your database for testing, development, or migration verification. Branches are full PostgreSQL databases created from a template, giving you an exact copy of schema and data. Backups use `pg_dump` and support point-in-time recovery.
+
+## Branching
+
+### How It Works
+
+A branch is a PostgreSQL database created with `CREATE DATABASE ... TEMPLATE`. This gives you a byte-for-byte copy of the source database at the point of creation, including all schemas, data, indexes, and extensions. The branch is completely isolated — changes to the branch do not affect the source.
+
+### Create a Branch
+
+<Tabs>
+  <TabItem label="cURL">
+```bash
+curl -X POST http://localhost:8787/api/branches \
+  -H "Content-Type: application/json" \
+  -d '{
+    "label": "feature-user-profiles",
+    "ttlHours": 24
+  }'
+```
+  </TabItem>
+  <TabItem label="JavaScript">
+```javascript
+const branch = await fetch(`${TRUSS_URL}/api/branches`, {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    label: "feature-user-profiles",
+    ttlHours: 24,
+  }),
+}).then(r => r.json());
+
+console.log("Branch created:", branch.id, branch.branch_db);
+```
+  </TabItem>
+  <TabItem label="Python">
+```python
+branch = requests.post(
+    f"{TRUSS_URL}/api/branches",
+    cookies=cookies,
+    json={"label": "feature-user-profiles", "ttlHours": 24},
+).json()
+
+print(f"Branch created: {branch['id']} ({branch['branch_db']})")
+```
+  </TabItem>
+</Tabs>
+
+| Parameter | Description |
+|-----------|-------------|
+| `label` | Human-readable name (max 60 characters). Defaults to `branch_{timestamp}` |
+| `ttlHours` | Time-to-live in hours. The branch auto-expires after this duration. `0` = no expiry |
+
+The response includes the branch ID, database name, creation timestamp, and size.
+
+### List Branches
+
+```bash
+curl http://localhost:8787/api/branches
+```
+
+Response:
+
+```json
+{
+  "branches": [
+    {
+      "id": 1,
+      "label": "feature-user-profiles",
+      "branch_db": "truss_branch_feature_user_profiles_abc123",
+      "status": "active",
+      "size_bytes": 8421376,
+      "ttl_hours": 24,
+      "created_at": "2025-01-15T10:00:00Z"
+    }
+  ]
+}
+```
+
+Each branch includes `size_bytes` computed via `pg_database_size()`.
+
+### Switch to a Branch
+
+From the dashboard, click on a branch to switch your active database connection. The SQL workbench, schema browser, ERD, and all database tools reflect the branch's state. You can run mutations freely without affecting the main database.
+
+The active connection is scoped to your session. Other users continue using the main database.
+
+### Delete a Branch
+
+```bash
+curl -X DELETE http://localhost:8787/api/branches/1
+```
+
+The branch database is dropped entirely with `DROP DATABASE`. This action is irreversible.
+
+### TTL Auto-Expire
+
+Branches with a `ttlHours` value are automatically marked as expired after the specified duration. Expired branches are cleaned up on the next check cycle. This prevents forgotten branches from consuming disk space.
+
+### Use Cases
+
+- **Feature development** — branch before implementing a schema change, test it on the branch, then apply to production
+- **Migration verification** — create a branch, run migrations on it, verify the result before running on the main database
+- **Data exploration** — branch to run destructive queries (DELETE, TRUNCATE) without risk
+- **Load testing** — branch to test performance under synthetic load without affecting production
+
+Branches are unlimited in self-hosted Truss — create as many as your disk space allows. Use `ttlHours` to auto-clean up short-lived branches.
+
+---
+
+## Backups
+
+### Create a Backup
+
+```bash
+curl -X POST http://localhost:8787/api/backups \
+  -H "Content-Type: application/json" \
+  -d '{"label": "pre-migration-backup"}'
+```
+
+Backups run `pg_dump` in the background. Up to 2 backups can run concurrently — additional requests are queued or rejected.
+
+### List Backups
+
+```bash
+curl http://localhost:8787/api/backups
+```
+
+Response:
+
+```json
+{
+  "backups": [
+    {
+      "id": 1,
+      "label": "pre-migration-backup",
+      "status": "completed",
+      "size_bytes": 52428800,
+      "created_at": "2025-01-15T10:00:00Z"
+    }
+  ]
+}
+```
+
+Backup statuses:
+
+| Status | Meaning |
+|--------|---------|
+| `in_progress` | The backup is currently running |
+| `completed` | The backup finished successfully |
+| `failed` | The backup encountered an error |
+
+### Restore from a Backup
+
+```bash
+curl -X POST http://localhost:8787/api/backups/1/restore
+```
+
+Restore replays the backup into a **new branch database**, not the main database. This lets you inspect the restored state before deciding to switch. From the dashboard, you can browse the restored branch, verify the data, and then switch your main connection if everything looks correct.
+
+### Point-in-Time Recovery
+
+PITR lets you restore your database to a specific timestamp. This requires WAL (Write-Ahead Log) archiving to be enabled in your PostgreSQL configuration.
+
+From the dashboard:
+1. Navigate to **Database > Backups**
+2. Select a backup
+3. Choose "Restore to point in time"
+4. Specify a target timestamp (must be within the WAL retention window)
+
+The restore creates a new branch at the specified point in time.
+
+---
+
+## Workflow: Safe Migration Deployment
+
+Combining branches, backups, and migrations gives you a safe deployment workflow:
+
+```bash
+# 1. Create a backup before migration
+curl -X POST http://localhost:8787/api/backups \
+  -H "Content-Type: application/json" \
+  -d '{"label": "pre-v2-migration"}'
+
+# 2. Create a branch to test the migration
+curl -X POST http://localhost:8787/api/branches \
+  -H "Content-Type: application/json" \
+  -d '{"label": "test-v2-migration", "ttlHours": 4}'
+
+# 3. Switch to the branch and run migrations
+# (do this from the dashboard, or switch programmatically)
+
+# 4. Run safety checks
+curl -X POST http://localhost:8787/api/migrations/check
+
+# 5. Apply migrations on the branch
+curl -X POST http://localhost:8787/api/migrations/idempotent/run
+
+# 6. Verify — run queries, check schema, test the app
+
+# 7. If everything looks good:
+#    - Switch back to main database
+#    - Run migrations on production
+#    - Delete the test branch
+
+# 8. If something went wrong:
+#    - Delete the branch (no harm done)
+#    - Restore from backup if needed
+```
+
+---
+
+## Dashboard
+
+The **Database** panel provides:
+
+- **Branches tab** — create, switch, and delete branches with size and TTL information
+- **Backups tab** — create backups, view status, restore to branch or point-in-time
+- **Branch indicator** — when connected to a branch, the dashboard shows a banner indicating the active branch name
+
+---
+
+## API Reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/branches` | List active branches with sizes |
+| `POST` | `/api/branches` | Create a new branch |
+| `DELETE` | `/api/branches/:id` | Delete a branch (drops database) |
+| `GET` | `/api/backups` | List all backups |
+| `POST` | `/api/backups` | Create a new backup |
+| `POST` | `/api/backups/:id/restore` | Restore backup to a new branch |

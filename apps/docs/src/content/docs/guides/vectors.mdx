@@ -1,0 +1,249 @@
+---
+title: Vectors
+description: pgvector similarity search and embedding storage.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Truss includes built-in support for pgvector — the PostgreSQL extension for vector similarity search. Store embeddings, create indexes, and run similarity queries from the dashboard or API.
+
+## Setup
+
+pgvector must be installed in your PostgreSQL instance. Most managed Postgres providers include it. For self-hosted Postgres:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+Or via the Truss dashboard, navigate to **Database > Vectors** and click "Enable pgvector".
+
+### Check status
+
+```bash
+curl http://localhost:8787/api/vectors/status
+```
+
+Returns whether the `vector` extension is installed and available.
+
+## Collections
+
+A "collection" in Truss is a regular Postgres table with a `vector` column. The dashboard provides a GUI for creating and managing these tables.
+
+### Create a collection
+
+```bash
+curl -X POST http://localhost:8787/api/vectors/collections \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schema": "public",
+    "table": "documents",
+    "dimensions": 1536
+  }'
+```
+
+This creates a table with `id`, `content`, `embedding` (vector), and `metadata` (jsonb) columns.
+
+### List collections
+
+```bash
+curl http://localhost:8787/api/vectors/collections
+```
+
+### Get collection details
+
+```bash
+curl http://localhost:8787/api/vectors/collections/public/documents
+```
+
+Returns column info, row count, indexes, and dimension size.
+
+### Delete a collection
+
+```bash
+curl -X DELETE http://localhost:8787/api/vectors/collections/public/documents
+```
+
+## Storing vectors
+
+Use the Auto-REST API or SQL-over-HTTP to insert embeddings:
+
+```bash
+# Via Auto-REST
+curl -X POST http://localhost:8787/v1/db/documents \
+  -H "apikey: truss_sk_your_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "The quick brown fox",
+    "embedding": [0.1, 0.2, 0.3, ...],
+    "metadata": {"source": "wikipedia"}
+  }'
+
+# Via SQL
+curl -X POST http://localhost:8787/v1/sql \
+  -H "apikey: truss_sk_your_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sql": "INSERT INTO documents (content, embedding, metadata) VALUES ($1, $2::vector, $3)",
+    "params": ["The quick brown fox", "[0.1, 0.2, 0.3]", {"source": "wikipedia"}]
+  }'
+```
+
+## Similarity search
+
+```bash
+curl -X POST http://localhost:8787/api/vectors/collections/public/documents/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vector": [0.1, 0.2, 0.3, ...],
+    "limit": 10,
+    "distance": "cosine"
+  }'
+```
+
+Supported distance functions:
+- `cosine` — cosine distance (default, good for normalized embeddings)
+- `l2` — Euclidean distance
+- `ip` — inner product
+
+## Indexes
+
+For large collections, create a vector index to speed up similarity search:
+
+### Create an index
+
+```bash
+curl -X POST http://localhost:8787/api/vectors/collections/public/documents/indexes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "hnsw",
+    "column": "embedding",
+    "options": {"m": 16, "ef_construction": 200}
+  }'
+```
+
+Index types:
+- **HNSW** — best for most use cases, good recall/speed tradeoff
+- **IVFFlat** — faster to build, good for very large datasets
+
+### List indexes
+
+Indexes are included in the collection details response.
+
+### Delete an index
+
+```bash
+curl -X DELETE http://localhost:8787/api/vectors/collections/public/documents/indexes/{index_name}
+```
+
+## Browse items
+
+```bash
+curl "http://localhost:8787/api/vectors/collections/public/documents/items?limit=50&offset=0"
+```
+
+## Dashboard
+
+The **Database > Vectors** view in the dashboard provides:
+- Extension status and enable/disable
+- Collection browser with row counts
+- Similarity search playground (paste a vector, see results)
+- Index management (create HNSW/IVFFlat, monitor size)
+
+## SDK / Code Examples
+
+<Tabs>
+  <TabItem label="JavaScript">
+```javascript
+import pg from "pg";
+
+const pool = new pg.Pool({ connectionString: DATABASE_URL });
+
+// 1. Insert a vector embedding
+await pool.query(`
+  INSERT INTO embeddings (content, embedding)
+  VALUES ($1, $2::vector)
+`, ["Hello world", "[0.1, 0.2, 0.3, ...]"]);
+
+// 2. Similarity search (cosine distance)
+const { rows } = await pool.query(`
+  SELECT id, content, embedding <=> $1::vector AS distance
+  FROM embeddings
+  ORDER BY embedding <=> $1::vector
+  LIMIT 10
+`, ["[0.1, 0.2, 0.3, ...]"]);
+console.log(rows);
+
+// 3. Create an HNSW index for fast approximate search
+await pool.query(`
+  CREATE INDEX ON embeddings
+  USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64)
+`);
+```
+  </TabItem>
+  <TabItem label="Python">
+```python
+import psycopg2
+
+conn = psycopg2.connect(DATABASE_URL)
+cur = conn.cursor()
+
+# 1. Insert a vector embedding
+cur.execute("""
+    INSERT INTO embeddings (content, embedding)
+    VALUES (%s, %s::vector)
+""", ("Hello world", "[0.1, 0.2, 0.3, ...]"))
+conn.commit()
+
+# 2. Similarity search (cosine distance)
+cur.execute("""
+    SELECT id, content, embedding <=> %s::vector AS distance
+    FROM embeddings
+    ORDER BY embedding <=> %s::vector
+    LIMIT 10
+""", ("[0.1, 0.2, 0.3, ...]", "[0.1, 0.2, 0.3, ...]"))
+results = cur.fetchall()
+print(results)
+
+# 3. Create an HNSW index
+cur.execute("""
+    CREATE INDEX ON embeddings
+    USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64)
+""")
+conn.commit()
+```
+  </TabItem>
+  <TabItem label="cURL">
+```bash
+# Insert a vector embedding via Truss SQL API
+curl -X POST \
+  ${TRUSS_API_URL}/v1/sql \
+  -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "INSERT INTO embeddings (content, embedding) VALUES ($1, $2::vector)",
+    "params": ["Hello world", "[0.1, 0.2, 0.3, ...]"]
+  }'
+
+# Similarity search
+curl -X POST \
+  ${TRUSS_API_URL}/v1/sql \
+  -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "SELECT id, content, embedding <=> $1::vector AS distance FROM embeddings ORDER BY embedding <=> $1::vector LIMIT 10",
+    "params": ["[0.1, 0.2, 0.3, ...]"]
+  }'
+
+# Create HNSW index
+curl -X POST \
+  ${TRUSS_API_URL}/v1/sql \
+  -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "CREATE INDEX ON embeddings USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)"
+  }'
+```
+  </TabItem>
+</Tabs>

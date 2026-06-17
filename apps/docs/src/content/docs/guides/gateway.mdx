@@ -1,0 +1,1025 @@
+---
+title: API Gateway
+description: Complete reference for the API Gateway — rule management, authenticators, authorizers, mutators, pipeline visualization, and request debugging.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Truss provides an API Gateway powered by Ory Oathkeeper. It acts as a reverse proxy that validates authentication, enforces permissions, and mutates headers before forwarding requests to your upstream services. Manage access rules from the dashboard with a visual pipeline builder, test requests live, and trace URL matching through the full handler chain.
+
+This guide covers all **27 API Gateway features** in Truss.
+
+## Setup
+
+Set these environment variables in `apps/api/.env`:
+
+```env
+OATHKEEPER_PROXY_URL=http://localhost:4455
+OATHKEEPER_ADMIN_URL=http://localhost:4456
+OATHKEEPER_ADMIN_TOKEN=your-admin-token
+```
+
+Oathkeeper is stateless — it does not require a database. It reads access rules from its configuration (or the Admin API) and makes decisions at request time.
+
+## How It Works
+
+Every request that hits the Oathkeeper proxy goes through a three-stage pipeline:
+
+1. **Authenticator** — validates the caller's identity (session cookie, bearer token, JWT, anonymous, etc.)
+2. **Authorizer** — checks whether the caller is allowed to access the resource (allow, deny, Keto permission check, remote service)
+3. **Mutator** — transforms the request before forwarding (inject headers, sign JWTs, set cookies, call enrichment APIs)
+
+If any stage rejects the request, Oathkeeper returns an error response and does not forward to the upstream.
+
+Multiple authenticators can be chained per rule — Oathkeeper tries them in order and uses the first one that succeeds.
+
+---
+
+## Rule Management
+
+### Rule CRUD
+
+Full create, edit, and delete for Oathkeeper access rules with a form-based editor. Each rule defines a URL match pattern, HTTP methods, the pipeline handlers, and an upstream URL. All mutations require admin access and are audit-logged.
+
+**Dashboard UI:** API Gateway > Rules tab
+
+**API endpoints:**
+
+```bash
+# List all rules
+curl http://localhost:8787/api/oathkeeper/rules
+
+# Get a specific rule
+curl http://localhost:8787/api/oathkeeper/rules/{rule_id}
+
+# Create or update a rule (upsert by ID)
+curl -X PUT http://localhost:8787/api/oathkeeper/rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "api-users-protected",
+    "match": {
+      "url": "http://localhost:4455/api/users/<**>",
+      "methods": ["GET", "POST", "PUT", "DELETE"]
+    },
+    "authenticators": [
+      { "handler": "cookie_session" }
+    ],
+    "authorizer": {
+      "handler": "keto_engine_acp_ory",
+      "config": {
+        "required_action": "read",
+        "required_resource": "users",
+        "subject": "{{ print .Subject }}"
+      }
+    },
+    "mutators": [
+      { "handler": "header", "config": { "headers": { "X-User-Id": "{{ print .Subject }}" } } }
+    ],
+    "upstream": {
+      "url": "http://localhost:3000"
+    }
+  }'
+
+# Delete a rule (admin-only)
+curl -X DELETE http://localhost:8787/api/oathkeeper/rules/{rule_id}
+```
+
+### Rule Editor
+
+A pipeline-field UI that lets you configure each stage of a rule visually:
+
+- **Match** — URL pattern (supports `<**>` glob and `<{param}>` named params) + HTTP methods
+- **Authenticator** — select handler type + configure handler-specific options
+- **Authorizer** — select handler type + configure permissions/conditions
+- **Mutator** — select handler type + configure header injection, JWT signing, etc.
+- **Upstream** — target URL, strip path, preserve host
+
+**Dashboard UI:** API Gateway > Rules > click any rule or "New Rule"
+
+### Visual Pipeline Builder
+
+A ReactFlow diagram that renders the full pipeline for each rule as a directed graph:
+
+**Match** -> **Authenticate** -> **Authorize** -> **Mutate** -> **Upstream**
+
+Each node is color-coded by pipeline stage and shows the handler type. The graph updates in real-time as you edit the rule configuration.
+
+**Dashboard UI:** API Gateway > Overview > Pipeline Visualizer (shows all rules as a combined graph)
+
+### Rule Import / Export (JSON)
+
+Download all rules as a JSON file for backup, version control, or migration between environments. Import rules from a JSON file to bulk-create or restore rules.
+
+**Dashboard UI:** API Gateway > Rules > "Export" / "Import" buttons
+
+```bash
+# Export all rules as JSON
+curl http://localhost:8787/api/oathkeeper/rules > oathkeeper-rules.json
+
+# Import: PUT each rule back
+cat oathkeeper-rules.json | jq -c '.[]' | while read rule; do
+  curl -X PUT http://localhost:8787/api/oathkeeper/rules \
+    -H "Content-Type: application/json" \
+    -d "$rule"
+done
+```
+
+### Rule Testing (Live HTTP)
+
+Send live HTTP requests through the Oathkeeper proxy to test that rules are working correctly. The test panel shows:
+
+- HTTP status code
+- Response headers (including any mutated headers)
+- Response body
+- Which rule matched
+
+**Dashboard UI:** API Gateway > Test tab
+
+**API endpoint (admin-only):**
+
+```bash
+curl -X POST http://localhost:8787/api/oathkeeper/judge \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "http://localhost:4455/api/users/123",
+    "method": "GET",
+    "headers": {
+      "Cookie": "ory_kratos_session=SESSION_TOKEN"
+    }
+  }'
+```
+
+Response:
+
+```json
+{
+  "status": 200,
+  "headers": {
+    "x-user-id": "user-uuid-here",
+    "content-type": "application/json"
+  },
+  "body": { "id": 123, "name": "Alice" }
+}
+```
+
+### Rule Dry-Run (URL Pattern Matching)
+
+A client-side URL pattern matching simulator. Enter a URL and HTTP method, and the dashboard shows which rule(s) would match — without sending any actual HTTP request. Useful for debugging rule priority and overlap.
+
+**Dashboard UI:** API Gateway > Test tab > "Dry Run" toggle
+
+The simulator evaluates Oathkeeper's URL matching syntax (`<**>` for glob, `<{param}>` for named params, regex patterns) against your input URL and displays:
+
+- The matched rule ID and match pattern
+- The full handler chain that would execute
+- Any rules that almost matched (partial URL match)
+
+---
+
+## Authenticators
+
+Oathkeeper supports 8 authenticator handlers. Each authenticator validates the caller's identity in a different way. Multiple authenticators can be chained per rule — Oathkeeper tries them in order and uses the first successful match.
+
+### `noop`
+
+Pass-through authentication. Does not validate any credentials. The request is forwarded with an empty subject. Use this for endpoints that handle their own authentication internally.
+
+**Config:** None required.
+
+```json
+{
+  "authenticators": [
+    { "handler": "noop" }
+  ]
+}
+```
+
+### `cookie_session`
+
+Validates Kratos session cookies by calling the Kratos `/sessions/whoami` endpoint. If the cookie is valid, the authenticated identity becomes the request subject.
+
+**Config:**
+
+```json
+{
+  "authenticators": [
+    {
+      "handler": "cookie_session",
+      "config": {
+        "check_session_url": "http://kratos:4433/sessions/whoami",
+        "preserve_path": true,
+        "extra_from": "identity.traits",
+        "subject_from": "identity.id",
+        "only": ["ory_kratos_session"]
+      }
+    }
+  ]
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `check_session_url` | Kratos whoami endpoint URL |
+| `only` | Cookie names to forward (default: all cookies) |
+| `subject_from` | JSONPath to extract the subject from the session response |
+| `extra_from` | JSONPath to extract extra data available in mutator templates |
+
+### `bearer_token`
+
+Validates bearer tokens from the `Authorization` header by forwarding them to a session check endpoint (typically Kratos).
+
+**Config:**
+
+```json
+{
+  "authenticators": [
+    {
+      "handler": "bearer_token",
+      "config": {
+        "check_session_url": "http://kratos:4433/sessions/whoami",
+        "preserve_path": true,
+        "subject_from": "identity.id",
+        "token_from": {
+          "header": "Authorization"
+        }
+      }
+    }
+  ]
+}
+```
+
+### `oauth2_introspection`
+
+Validates OAuth2 access tokens by calling Hydra's token introspection endpoint (RFC 7662). If the token is active, the introspection response becomes the authentication session.
+
+**Config:**
+
+```json
+{
+  "authenticators": [
+    {
+      "handler": "oauth2_introspection",
+      "config": {
+        "introspection_url": "http://hydra:4445/admin/oauth2/introspect",
+        "scope_strategy": "exact",
+        "required_scope": ["openid"],
+        "target_audience": ["https://api.example.com"],
+        "trusted_issuers": ["http://hydra:4444/"],
+        "pre_authorization": {
+          "enabled": true,
+          "client_id": "introspection-client",
+          "client_secret": "introspection-secret",
+          "token_url": "http://hydra:4444/oauth2/token",
+          "scope": ["openid"]
+        }
+      }
+    }
+  ]
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `introspection_url` | Hydra admin introspection endpoint |
+| `scope_strategy` | How to match scopes: `exact`, `hierarchic`, `wildcard` |
+| `required_scope` | Scopes the token must have |
+| `target_audience` | Audiences the token must include |
+| `pre_authorization` | Client credentials for authenticating with the introspection endpoint |
+
+### `oauth2_client_credentials`
+
+Authenticates the request using the OAuth2 client credentials from the `Authorization` header (Basic auth). Validates the client ID and secret against Hydra's token endpoint.
+
+**Config:**
+
+```json
+{
+  "authenticators": [
+    {
+      "handler": "oauth2_client_credentials",
+      "config": {
+        "token_url": "http://hydra:4444/oauth2/token",
+        "required_scope": ["api:read"]
+      }
+    }
+  ]
+}
+```
+
+### `jwt`
+
+Validates JWTs against a JWKS endpoint. Does not call any external session or introspection endpoint — validation is done locally using the public keys.
+
+**Config:**
+
+```json
+{
+  "authenticators": [
+    {
+      "handler": "jwt",
+      "config": {
+        "jwks_urls": ["http://hydra:4444/.well-known/jwks.json"],
+        "required_scope": ["openid"],
+        "scope_strategy": "exact",
+        "target_audience": ["https://api.example.com"],
+        "trusted_issuers": ["http://hydra:4444/"],
+        "allowed_algorithms": ["RS256", "ES256"]
+      }
+    }
+  ]
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `jwks_urls` | JWKS endpoints to fetch public keys from |
+| `allowed_algorithms` | Accepted signing algorithms |
+| `trusted_issuers` | Accepted `iss` claim values |
+| `target_audience` | Required `aud` claim values |
+
+### `anonymous`
+
+Allows unauthenticated access. Sets the subject to `anonymous` (or a configured value). Use this for public endpoints that should still go through the gateway pipeline.
+
+**Config:**
+
+```json
+{
+  "authenticators": [
+    {
+      "handler": "anonymous",
+      "config": {
+        "subject": "guest"
+      }
+    }
+  ]
+}
+```
+
+### `unauthorized`
+
+Rejects all requests unconditionally. Returns HTTP 401. Use this to explicitly block access to routes that should never be reachable through the gateway.
+
+**Config:** None required.
+
+```json
+{
+  "authenticators": [
+    { "handler": "unauthorized" }
+  ]
+}
+```
+
+---
+
+## Authorizers
+
+After authentication, the authorizer decides whether the authenticated subject is allowed to access the requested resource. Oathkeeper supports 5 authorizer handlers.
+
+### `allow`
+
+Always allows access. Rely on the authenticator stage alone to control access. This is the simplest authorizer and the most common for APIs where "authenticated = authorized."
+
+**Config:** None required.
+
+```json
+{
+  "authorizer": {
+    "handler": "allow"
+  }
+}
+```
+
+### `deny`
+
+Always denies access. Returns HTTP 403. Use this to temporarily block a route or as a default fallback while configuring more specific rules.
+
+**Config:** None required.
+
+```json
+{
+  "authorizer": {
+    "handler": "deny"
+  }
+}
+```
+
+### `keto_engine_acp_ory`
+
+Checks permissions against Ory Keto using relation-based access control (ReBAC). This lets you enforce fine-grained permissions at the gateway level, so your upstream services do not need to implement permission checks.
+
+**Config:**
+
+```json
+{
+  "authorizer": {
+    "handler": "keto_engine_acp_ory",
+    "config": {
+      "base_url": "http://keto:4466",
+      "required_action": "read",
+      "required_resource": "documents:{{ printIndex .MatchContext.RegexpCaptureGroups 0 }}",
+      "subject": "{{ print .Subject }}",
+      "flavor": "exact"
+    }
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `base_url` | Keto read API URL |
+| `required_action` | The action/relation to check (e.g., `read`, `write`, `admin`) |
+| `required_resource` | The resource (namespace:object) — supports Go templates with match context |
+| `subject` | The subject to check — typically `{{ print .Subject }}` from the authenticator |
+| `flavor` | Match strategy: `exact`, `glob`, `regex` |
+
+**Example:** Protect document access with Keto permissions:
+
+```json
+{
+  "id": "documents-read",
+  "match": {
+    "url": "http://localhost:4455/api/documents/<{id}>",
+    "methods": ["GET"]
+  },
+  "authenticators": [{ "handler": "cookie_session" }],
+  "authorizer": {
+    "handler": "keto_engine_acp_ory",
+    "config": {
+      "base_url": "http://keto:4466",
+      "required_action": "read",
+      "required_resource": "documents:{{ printIndex .MatchContext.RegexpCaptureGroups 0 }}",
+      "subject": "{{ print .Subject }}"
+    }
+  },
+  "mutators": [{ "handler": "header" }],
+  "upstream": { "url": "http://localhost:3000" }
+}
+```
+
+### `remote`
+
+Makes an HTTP callout to an external authorization service. The external service receives the request details and returns allow/deny. Use this to integrate with custom authorization logic or third-party services.
+
+**Config:**
+
+```json
+{
+  "authorizer": {
+    "handler": "remote",
+    "config": {
+      "remote": "http://authz-service:8080/authorize",
+      "headers": {
+        "X-Original-URL": "{{ print .MatchContext.URL }}",
+        "X-Subject": "{{ print .Subject }}"
+      }
+    }
+  }
+}
+```
+
+The remote service should return HTTP 200 to allow or any other status to deny.
+
+### `remote_json`
+
+Like `remote`, but sends a structured JSON body to the external authorization service. Provides more context than plain headers.
+
+**Config:**
+
+```json
+{
+  "authorizer": {
+    "handler": "remote_json",
+    "config": {
+      "remote": "http://authz-service:8080/authorize",
+      "payload": "{\"subject\": \"{{ print .Subject }}\", \"resource\": \"{{ print .MatchContext.URL }}\", \"action\": \"{{ print .MatchContext.Method }}\"}"
+    }
+  }
+}
+```
+
+The `payload` field is a Go template string that produces a JSON body. The remote service should return HTTP 200 to allow.
+
+---
+
+## Mutators
+
+After authentication and authorization pass, mutators transform the request before forwarding it to the upstream service. Oathkeeper supports 5 mutator handlers. Multiple mutators can be chained per rule.
+
+### `noop`
+
+Pass-through — no mutation. Forwards the request to the upstream as-is.
+
+**Config:** None required.
+
+```json
+{
+  "mutators": [
+    { "handler": "noop" }
+  ]
+}
+```
+
+### `header`
+
+Injects custom headers into the proxied request. Use Go template syntax to reference the authenticated subject, session data, and match context.
+
+**Config:**
+
+```json
+{
+  "mutators": [
+    {
+      "handler": "header",
+      "config": {
+        "headers": {
+          "X-User-Id": "{{ print .Subject }}",
+          "X-User-Email": "{{ print .Extra.identity.traits.email }}",
+          "X-User-Name": "{{ print .Extra.identity.traits.name }}",
+          "X-Authenticated": "true"
+        }
+      }
+    }
+  ]
+}
+```
+
+Your upstream service reads these headers to identify the user without needing to validate sessions or tokens itself.
+
+### `id_token`
+
+Mints an OIDC-compliant JWT and sets it as the `Authorization: Bearer <jwt>` header on the proxied request. The JWT is signed with the Oathkeeper signing key and contains claims from the authentication session.
+
+**Config:**
+
+```json
+{
+  "mutators": [
+    {
+      "handler": "id_token",
+      "config": {
+        "issuer_url": "https://gateway.example.com",
+        "jwks_url": "file:///etc/oathkeeper/id_token.jwks.json",
+        "ttl": "60s",
+        "claims": "{\"email\": \"{{ print .Extra.identity.traits.email }}\"}"
+      }
+    }
+  ]
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `issuer_url` | The `iss` claim in the minted JWT |
+| `jwks_url` | Signing key location (file or URL) |
+| `ttl` | Token lifetime |
+| `claims` | Additional claims to include (Go template) |
+
+### `cookie`
+
+Sets cookies on the proxied request. Useful for forwarding session identifiers or injecting custom cookies for the upstream.
+
+**Config:**
+
+```json
+{
+  "mutators": [
+    {
+      "handler": "cookie",
+      "config": {
+        "cookies": {
+          "user_id": "{{ print .Subject }}",
+          "session_verified": "true"
+        }
+      }
+    }
+  ]
+}
+```
+
+### `hydrator`
+
+Enriches the request by calling an external API (hydration endpoint) and merging the response into the session data. Use this to add application-specific context (user profile, org membership, feature flags) to the request.
+
+**Config:**
+
+```json
+{
+  "mutators": [
+    {
+      "handler": "hydrator",
+      "config": {
+        "api": {
+          "url": "http://user-service:8080/hydrate",
+          "auth": {
+            "basic": {
+              "username": "gateway",
+              "password": "secret"
+            }
+          },
+          "retry": {
+            "give_up_after": "1s",
+            "max_delay": "500ms"
+          }
+        },
+        "cache": {
+          "ttl": "60s"
+        }
+      }
+    }
+  ]
+}
+```
+
+The hydration endpoint receives the current session as a JSON POST body and should return enriched session data. The enriched data is then available to subsequent mutators in the chain (e.g., inject hydrated fields as headers).
+
+---
+
+## Dashboard and Observability
+
+### Pipeline Visualizer
+
+A ReactFlow diagram that renders all gateway rules as a combined pipeline graph. Each rule is displayed as a flow from Match to Upstream, with color-coded nodes for each pipeline stage:
+
+- **Blue** — Match (URL pattern + methods)
+- **Green** — Authenticator handler
+- **Orange** — Authorizer handler
+- **Purple** — Mutator handler
+- **Gray** — Upstream target
+
+Clicking a node opens the rule editor for that rule.
+
+**Dashboard UI:** API Gateway > Overview
+
+### Request Flow Debugger
+
+Trace a URL through the gateway pipeline to see exactly which rule matches and what the full handler chain looks like. Enter a URL and HTTP method, and the debugger shows:
+
+1. Which rule(s) match the URL pattern
+2. The authenticator that would execute
+3. The authorizer that would evaluate
+4. The mutators that would transform the request
+5. The upstream target
+
+For live testing, enable the "Live Request" toggle to send an actual HTTP request through the proxy and see the real response including mutated headers.
+
+**Dashboard UI:** API Gateway > Test tab
+
+### Pipeline Handler Reference
+
+Built-in documentation for all 18 handler types (8 authenticators + 5 authorizers + 5 mutators) with:
+
+- Handler name and description
+- Required and optional configuration fields
+- Example configuration JSON
+- Common use cases
+
+**Dashboard UI:** API Gateway > Overview > "Handler Reference" section
+
+---
+
+## Health and Version
+
+```bash
+# Health check (via Truss API)
+curl http://localhost:8787/api/oathkeeper/health
+
+# Direct Oathkeeper health
+curl ${OATHKEEPER_ADMIN_URL}/health/alive
+
+# Version info
+curl http://localhost:8787/api/oathkeeper/version
+
+# Signing credentials (admin-only)
+curl http://localhost:8787/api/oathkeeper/credentials
+```
+
+---
+
+## Client API
+
+Gateway status and rules are available via the Truss Client API (requires API key):
+
+```bash
+# Health check (any API key)
+curl http://localhost:8787/v1/gateway/health \
+  -H "apikey: truss_sk_your_key"
+
+# List access rules (requires service_role key)
+curl http://localhost:8787/v1/gateway/rules \
+  -H "apikey: truss_sk_your_key"
+```
+
+---
+
+## Dashboard
+
+The **API Gateway** view in the dashboard provides:
+- **Overview** — pipeline visualization (ReactFlow), health status, rule count, authenticator/authorizer/mutator breakdown, handler reference
+- **Rules** — browse, create, edit, and delete access rules with the pipeline editor
+- **Test** — proxy tester with auth method selection, response viewer, live request toggle, and dry-run URL matching simulator
+- **SDK Snippets** — copy-paste integration code
+
+---
+
+## Common Patterns
+
+### Public API with Rate Limiting Header
+
+Allow anonymous access but inject a rate-limit tier header for the upstream:
+
+```json
+{
+  "id": "public-api",
+  "match": {
+    "url": "http://localhost:4455/api/public/<**>",
+    "methods": ["GET"]
+  },
+  "authenticators": [
+    { "handler": "anonymous", "config": { "subject": "anon" } }
+  ],
+  "authorizer": { "handler": "allow" },
+  "mutators": [
+    { "handler": "header", "config": { "headers": { "X-Rate-Tier": "free" } } }
+  ],
+  "upstream": { "url": "http://localhost:3000" }
+}
+```
+
+### Session + Keto Permissions
+
+Protect an API with Kratos session auth and Keto fine-grained permissions:
+
+```json
+{
+  "id": "protected-resource",
+  "match": {
+    "url": "http://localhost:4455/api/projects/<{project_id}>/<**>",
+    "methods": ["GET", "POST", "PUT", "DELETE"]
+  },
+  "authenticators": [
+    { "handler": "cookie_session", "config": { "check_session_url": "http://kratos:4433/sessions/whoami" } }
+  ],
+  "authorizer": {
+    "handler": "keto_engine_acp_ory",
+    "config": {
+      "base_url": "http://keto:4466",
+      "required_action": "access",
+      "required_resource": "projects:{{ printIndex .MatchContext.RegexpCaptureGroups 0 }}",
+      "subject": "{{ print .Subject }}"
+    }
+  },
+  "mutators": [
+    {
+      "handler": "header",
+      "config": {
+        "headers": {
+          "X-User-Id": "{{ print .Subject }}",
+          "X-Project-Id": "{{ printIndex .MatchContext.RegexpCaptureGroups 0 }}"
+        }
+      }
+    }
+  ],
+  "upstream": { "url": "http://localhost:3000" }
+}
+```
+
+### OAuth2 Token + JWT Mutation
+
+Validate OAuth2 tokens via introspection and mint a signed JWT for the upstream:
+
+```json
+{
+  "id": "oauth2-to-jwt",
+  "match": {
+    "url": "http://localhost:4455/api/services/<**>",
+    "methods": ["GET", "POST"]
+  },
+  "authenticators": [
+    {
+      "handler": "oauth2_introspection",
+      "config": {
+        "introspection_url": "http://hydra:4445/admin/oauth2/introspect",
+        "required_scope": ["openid", "api:read"]
+      }
+    }
+  ],
+  "authorizer": { "handler": "allow" },
+  "mutators": [
+    {
+      "handler": "id_token",
+      "config": {
+        "issuer_url": "https://gateway.example.com",
+        "jwks_url": "file:///etc/oathkeeper/id_token.jwks.json",
+        "ttl": "60s"
+      }
+    }
+  ],
+  "upstream": { "url": "http://localhost:3000" }
+}
+```
+
+### Multi-Auth Fallback
+
+Try session auth first, fall back to OAuth2 introspection, then allow anonymous:
+
+```json
+{
+  "id": "multi-auth",
+  "match": {
+    "url": "http://localhost:4455/api/feed/<**>",
+    "methods": ["GET"]
+  },
+  "authenticators": [
+    { "handler": "cookie_session", "config": { "check_session_url": "http://kratos:4433/sessions/whoami" } },
+    { "handler": "oauth2_introspection", "config": { "introspection_url": "http://hydra:4445/admin/oauth2/introspect" } },
+    { "handler": "anonymous", "config": { "subject": "guest" } }
+  ],
+  "authorizer": { "handler": "allow" },
+  "mutators": [
+    { "handler": "header", "config": { "headers": { "X-User-Id": "{{ print .Subject }}" } } }
+  ],
+  "upstream": { "url": "http://localhost:3000" }
+}
+```
+
+---
+
+## SDK / Code Examples
+
+<Tabs>
+  <TabItem label="JavaScript">
+```javascript
+// Proxy requests through the API Gateway
+// Oathkeeper validates auth + enforces permissions automatically
+
+// 1. Session-authenticated request (cookie from Kratos)
+const res = await fetch(`${OATHKEEPER_PROXY_URL}/api/protected`, {
+  credentials: "include", // sends Kratos session cookie
+});
+// Oathkeeper validates session -> checks Keto permissions -> injects X-User-Id -> forwards
+
+// 2. Bearer token request (OAuth2 token from Hydra)
+const res2 = await fetch(`${OATHKEEPER_PROXY_URL}/api/resource`, {
+  headers: {
+    Authorization: `Bearer ${accessToken}`,
+  },
+});
+// Oathkeeper introspects token via Hydra -> checks scope -> forwards
+
+// 3. Read mutated headers from upstream (Node.js/Express)
+app.get("/api/protected", (req, res) => {
+  const userId = req.headers["x-user-id"];       // injected by header mutator
+  const jwt = req.headers["authorization"];        // rewritten by id_token mutator
+  const email = req.headers["x-user-email"];       // injected by header mutator
+  console.log(`Request from user: ${userId} (${email})`);
+  res.json({ userId, email });
+});
+
+// 4. Manage rules via Truss Client API
+const rules = await fetch("http://localhost:8787/v1/gateway/rules", {
+  headers: { apikey: "truss_sk_your_key" },
+}).then(r => r.json());
+console.log(`${rules.length} gateway rules configured`);
+```
+  </TabItem>
+  <TabItem label="Python">
+```python
+import requests
+
+# Session-authenticated request through gateway
+res = requests.get(
+    f"{OATHKEEPER_PROXY_URL}/api/protected",
+    cookies={"ory_kratos_session": session_token},
+)
+
+# Bearer token request through gateway
+res = requests.get(
+    f"{OATHKEEPER_PROXY_URL}/api/resource",
+    headers={"Authorization": f"Bearer {access_token}"},
+)
+
+# Read gateway rules via Truss Client API
+rules = requests.get(
+    "http://localhost:8787/v1/gateway/rules",
+    headers={"apikey": "truss_sk_your_key"},
+).json()
+
+for rule in rules:
+    print(f"Rule: {rule['id']} -> {rule['match']['url']}")
+    print(f"  Auth: {[a['handler'] for a in rule.get('authenticators', [])]}")
+    print(f"  Authz: {rule.get('authorizer', {}).get('handler')}")
+    print(f"  Mutators: {[m['handler'] for m in rule.get('mutators', [])]}")
+
+# Read mutated headers in your upstream (Flask)
+from flask import Flask, request
+app = Flask(__name__)
+
+@app.route("/api/protected")
+def protected():
+    user_id = request.headers.get("X-User-Id")
+    email = request.headers.get("X-User-Email")
+    return {"user_id": user_id, "email": email}
+```
+  </TabItem>
+  <TabItem label="Go">
+```go
+package main
+
+import (
+	"fmt"
+	"net/http"
+)
+
+func main() {
+	// Session-based request through gateway
+	req, _ := http.NewRequest("GET", oathkeeperProxy+"/api/data", nil)
+	req.Header.Set("Cookie", "ory_kratos_session="+sessionToken)
+	res, _ := http.DefaultClient.Do(req)
+	// Upstream receives X-User-Id header injected by Oathkeeper
+
+	// Bearer token request through gateway
+	req2, _ := http.NewRequest("GET", oathkeeperProxy+"/api/resource", nil)
+	req2.Header.Set("Authorization", "Bearer "+accessToken)
+	res2, _ := http.DefaultClient.Do(req2)
+	// Oathkeeper introspects token -> checks permissions -> forwards
+
+	// Read mutated headers in your upstream handler
+	http.HandleFunc("/api/protected", func(w http.ResponseWriter, r *http.Request) {
+		userId := r.Header.Get("X-User-Id")
+		email := r.Header.Get("X-User-Email")
+		fmt.Fprintf(w, `{"user_id": "%s", "email": "%s"}`, userId, email)
+	})
+
+	_ = res
+	_ = res2
+}
+```
+  </TabItem>
+  <TabItem label="cURL">
+```bash
+# Test a proxied request through the API Gateway (session cookie)
+curl -v \
+  -b "ory_kratos_session=SESSION_TOKEN" \
+  ${OATHKEEPER_PROXY_URL}/api/protected
+
+# Test with bearer token (OAuth2)
+curl -v \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  ${OATHKEEPER_PROXY_URL}/api/resource
+
+# Test with anonymous access
+curl -v ${OATHKEEPER_PROXY_URL}/api/public/feed
+
+# List all gateway rules
+curl http://localhost:8787/api/oathkeeper/rules
+
+# Create/update a rule (admin-only)
+curl -X PUT http://localhost:8787/api/oathkeeper/rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "test-rule",
+    "match": { "url": "http://localhost:4455/test", "methods": ["GET"] },
+    "authenticators": [{ "handler": "anonymous" }],
+    "authorizer": { "handler": "allow" },
+    "mutators": [{ "handler": "noop" }],
+    "upstream": { "url": "http://localhost:3000" }
+  }'
+
+# Delete a rule (admin-only)
+curl -X DELETE http://localhost:8787/api/oathkeeper/rules/test-rule
+
+# Health check
+curl ${OATHKEEPER_ADMIN_URL}/health/alive
+
+# Check version
+curl http://localhost:8787/api/oathkeeper/version
+
+# Live test via judge endpoint (admin-only)
+curl -X POST http://localhost:8787/api/oathkeeper/judge \
+  -H "Content-Type: application/json" \
+  -d '{"url": "http://localhost:4455/api/protected", "method": "GET"}'
+
+# Via Client API
+curl http://localhost:8787/v1/gateway/health -H "apikey: truss_sk_your_key"
+curl http://localhost:8787/v1/gateway/rules -H "apikey: truss_sk_your_key"
+```
+  </TabItem>
+</Tabs>
+
+---
+
+## API Endpoint Reference
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/oathkeeper/health` | GET | Session | Health check |
+| `/api/oathkeeper/rules` | GET | Session | List all rules |
+| `/api/oathkeeper/rules/:id` | GET | Session | Get rule details |
+| `/api/oathkeeper/rules` | PUT | Admin | Create or update rule (upsert) |
+| `/api/oathkeeper/rules/:id` | DELETE | Admin | Delete rule |
+| `/api/oathkeeper/credentials` | GET | Admin | Signing credentials |
+| `/api/oathkeeper/version` | GET | Session | Version info |
+| `/api/oathkeeper/judge` | POST | Admin | Live request tester |
+| `/v1/gateway/health` | GET | API Key | Health check |
+| `/v1/gateway/rules` | GET | API Key (service_role) | List rules |

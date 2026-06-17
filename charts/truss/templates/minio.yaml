@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: truss-minio
+spec:
+  selector: { app: truss-minio }
+  ports:
+    - { name: s3, port: 9000, targetPort: 9000 }
+    - { name: console, port: 9001, targetPort: 9001 }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: truss-minio
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: {{ .Values.minio.storage }} } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: truss-minio
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: truss-minio }
+  template:
+    metadata:
+      labels: { app: truss-minio }
+    spec:
+      containers:
+        - name: minio
+          image: {{ .Values.images.minio }}
+          args: ["server", "/data", "--console-address", ":9001"]
+          # Minimal hardening: MinIO can run non-root, but writing to its PVC
+          # then needs a pod-level fsGroup matching the image's uid (varies by
+          # release). To avoid breaking PVC writes we keep just the conservative
+          # guards here; add `runAsNonRoot: true` + a `securityContext.fsGroup`
+          # at the pod spec once the image uid is confirmed.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: minio-access-key } }
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: minio-secret-key } }
+          ports: [{ containerPort: 9000 }, { containerPort: 9001 }]
+          readinessProbe: { httpGet: { path: /minio/health/ready, port: 9000 }, initialDelaySeconds: 5, periodSeconds: 10 }
+          volumeMounts: [{ name: data, mountPath: /data }]
+          resources: {{- toYaml .Values.resources.small | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: truss-minio }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: truss-minio-init
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: {{ .Values.images.minio }}
+          command: ["/bin/sh", "-ec"]
+          env:
+            - name: AK
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: minio-access-key } }
+            - name: SK
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: minio-secret-key } }
+          args:
+            - |
+              until mc alias set tr http://truss-minio:9000 "$AK" "$SK" >/dev/null 2>&1; do echo "wait minio"; sleep 3; done
+              mc mb --ignore-existing tr/{{ .Values.minio.bucket }}
+              echo "bucket ready"

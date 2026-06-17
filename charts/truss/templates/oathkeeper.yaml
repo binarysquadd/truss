@@ -1,0 +1,86 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: truss-oathkeeper-config
+data:
+  config.yaml: |
+    log: { level: info, format: json }
+    serve:
+      proxy: { port: 4455 }
+      api: { port: 4456 }
+    access_rules:
+      repositories:
+        - file:///etc/oathkeeper/rules.json
+    errors:
+      fallback: [json]
+      handlers:
+        json: { enabled: true, config: { verbose: true } }
+    authenticators:
+      noop: { enabled: true }
+      unauthorized: { enabled: true }
+      anonymous: { enabled: true, config: { subject: guest } }
+      # Validates the Ory Kratos browser session cookie — the gateway's default
+      # "is this a logged-in Truss user?" check.
+      cookie_session:
+        enabled: true
+        config:
+          check_session_url: http://truss-kratos:4433/sessions/whoami
+          preserve_path: true
+          only: [ory_kratos_session]
+    authorizers:
+      allow: { enabled: true }
+      deny: { enabled: true }
+    mutators:
+      noop: { enabled: true }
+      header:
+        enabled: true
+        config:
+          headers:
+            X-User: "{{`{{ print .Subject }}`}}"
+  # Rules are managed at runtime via the Truss API (truss_internal.gateway_rules,
+  # synced to Oathkeeper's admin API). Start empty.
+  rules.json: |
+    []
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: truss-oathkeeper
+spec:
+  selector: { app: truss-oathkeeper }
+  ports:
+    - { name: proxy, port: 4455, targetPort: 4455 }
+    - { name: api, port: 4456, targetPort: 4456 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: truss-oathkeeper
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: truss-oathkeeper }
+  template:
+    metadata:
+      labels: { app: truss-oathkeeper }
+    spec:
+      containers:
+        - name: oathkeeper
+          image: {{ .Values.images.oathkeeper }}
+          args: ["serve", "--config", "/etc/oathkeeper/config.yaml"]
+          # the oathkeeper image declares a NAMED user (ory = uid 100) — pin the
+          # numeric uid/gid so kube can verify non-root.
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 101
+            capabilities:
+              drop: ["ALL"]
+          ports: [{ containerPort: 4455 }, { containerPort: 4456 }]
+          readinessProbe: { httpGet: { path: /health/alive, port: 4456 }, initialDelaySeconds: 5, periodSeconds: 10 }
+          volumeMounts: [{ name: config, mountPath: /etc/oathkeeper }]
+          resources: {{- toYaml .Values.resources.small | nindent 12 }}
+      volumes:
+        - name: config
+          configMap: { name: truss-oathkeeper-config }

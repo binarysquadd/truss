@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: truss-hydra
+spec:
+  selector: { app: truss-hydra }
+  ports:
+    - { name: public, port: 4444, targetPort: 4444 }
+    - { name: admin, port: 4445, targetPort: 4445 }
+---
+# One-shot: run Hydra SQL migrations in the `hydra` schema. (Mirrors the compose
+# hydra-migrate.) The `hydra` schema is created by truss-postgres-init.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: truss-hydra-migrate
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: {{ .Values.images.hydra }}
+          command: ["/bin/sh", "-ec"]
+          env:
+            - name: DSN
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: hydra-database-url } }
+          args:
+            - |
+              until nc -z truss-postgres 5432; do echo "wait pg"; sleep 2; done
+              hydra migrate sql -e --yes
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: truss-hydra
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: truss-hydra }
+  template:
+    metadata:
+      labels: { app: truss-hydra }
+    spec:
+      initContainers:
+        - name: wait-migrate
+          image: {{ .Values.images.hydra }}
+          command: ["/bin/sh","-ec","until hydra migrate sql -e --yes >/dev/null 2>&1; do echo 'wait hydra migrate'; sleep 3; done"]
+          env:
+            - name: DSN
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: hydra-database-url } }
+      containers:
+        - name: hydra
+          image: {{ .Values.images.hydra }}
+          # --dev allows the http issuer used by the in-cluster default; front Hydra
+          # with TLS and set URLS_SELF_ISSUER to a public https URL in production.
+          args: ["serve", "all", "--dev"]
+          # the hydra image declares a NAMED user (ory = uid 100) — pin the numeric
+          # uid/gid so kube can verify non-root.
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 101
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: DSN
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: hydra-database-url } }
+            - name: SECRETS_SYSTEM
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: hydra-system-secret } }
+            - { name: URLS_SELF_ISSUER, value: "http://truss-hydra:4444" }
+            - { name: URLS_LOGIN, value: "{{ .Values.publicUrl }}/api/hydra/bridge/login" }
+            - { name: URLS_CONSENT, value: "{{ .Values.publicUrl }}/api/hydra/bridge/consent" }
+          ports: [{ containerPort: 4444 }, { containerPort: 4445 }]
+          readinessProbe: { httpGet: { path: /health/ready, port: 4445 }, initialDelaySeconds: 5, periodSeconds: 10 }
+          resources: {{- toYaml .Values.resources.small | nindent 12 }}

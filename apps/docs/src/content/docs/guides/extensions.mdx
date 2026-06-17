@@ -1,0 +1,101 @@
+---
+title: Database Extensions
+description: Enable and manage 33 curated PostgreSQL extensions from the Truss dashboard.
+---
+
+Truss ships with 33 curated PostgreSQL extensions that you can enable or disable from the dashboard. Extensions add data types, indexing strategies, search capabilities, and more to your database.
+
+## Managing Extensions
+
+Navigate to **Database → Extensions** in the dashboard to see all available extensions. Each extension shows:
+
+- **Name** and description
+- **Category** (Search, Data Types, Indexing, Security, Utilities, Performance, Geospatial, Federation, Diagnostics)
+- **Version** available
+- **Toggle switch** to enable/disable
+
+### Enabling an Extension
+
+Click the toggle switch to enable. This runs `CREATE EXTENSION IF NOT EXISTS <name>` on your database.
+
+### Disabling an Extension
+
+Click the toggle to disable. If other database objects (tables, functions, indexes) depend on the extension, you'll be prompted to confirm a CASCADE drop.
+
+## Available Extensions
+
+### Search & Text
+| Extension | Description |
+|-----------|-------------|
+| `pg_trgm` | Trigram-based text similarity and fuzzy search |
+| `fuzzystrmatch` | Levenshtein distance, Soundex, Metaphone |
+| `unaccent` | Remove accents for normalized search |
+| `citext` | Case-insensitive text data type |
+
+### Data Types
+| Extension | Description |
+|-----------|-------------|
+| `hstore` | Key-value pairs stored in a single column |
+| `ltree` | Hierarchical tree structures (e.g. org charts, categories) |
+| `cube` | Multi-dimensional cubes |
+| `seg` | Line segments and floating-point intervals |
+| `isn` | ISBN, ISSN, EAN product number types |
+| `intarray` | Integer array operators and indexing |
+
+### Indexing
+| Extension | Description |
+|-----------|-------------|
+| `btree_gin` | GIN index support for common data types |
+| `btree_gist` | GiST index support for common data types |
+| `bloom` | Bloom filter index for multi-column lookups |
+
+### Security
+| Extension | Description |
+|-----------|-------------|
+| `pgcrypto` | Encryption, hashing (SHA, MD5, bcrypt), random bytes |
+| `sslinfo` | Inspect SSL certificate details |
+
+### Utilities
+| Extension | Description |
+|-----------|-------------|
+| `uuid-ossp` | Generate UUIDs (v1, v4, v5) |
+| `tablefunc` | Crosstab / pivot table functions |
+| `moddatetime` | Auto-update modification timestamps |
+| `lo` | Large object lifecycle management |
+| `tcn` | Triggered change notifications |
+
+### Performance
+| Extension | Description |
+|-----------|-------------|
+| `pg_stat_statements` | Track query execution statistics |
+| `pg_prewarm` | Preload table data into buffer cache |
+| `pg_buffercache` | Inspect shared buffer contents |
+| `pgstattuple` | Tuple-level storage statistics |
+| `pgrowlocks` | Row-level lock inspection |
+
+### Geospatial
+| Extension | Description |
+|-----------|-------------|
+| `earthdistance` | Great-circle distance calculations |
+
+### Federation
+| Extension | Description |
+|-----------|-------------|
+| `postgres_fdw` | Query remote PostgreSQL servers |
+| `dblink` | Cross-database queries |
+
+### Diagnostics
+| Extension | Description |
+|-----------|-------------|
+| `pageinspect` | Low-level page inspection |
+| `pg_visibility` | Visibility map analysis |
+| `pg_freespacemap` | Free space map inspection |
+| `amcheck` | B-tree integrity verification |
+| `pg_walinspect` | WAL content inspection |
+
+## API Reference
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/extensions` | List all 33 curated extensions with status |
+| POST | `/api/extensions/:name/toggle` | Enable or disable an extension |

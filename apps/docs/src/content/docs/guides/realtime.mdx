@@ -1,0 +1,268 @@
+---
+title: Realtime
+description: WebSocket subscriptions for live database changes.
+---
+
+Truss provides realtime subscriptions using PostgreSQL's LISTEN/NOTIFY mechanism and WebSocket connections. Subscribe to table changes and receive events instantly.
+
+## How it works
+
+1. You create a subscription for a table (e.g., `public.messages`)
+2. Truss creates a PostgreSQL trigger on that table
+3. On INSERT, UPDATE, or DELETE, the trigger sends a NOTIFY to a channel
+4. Truss's dedicated LISTEN connection picks up the notification
+5. The event is broadcast to all connected WebSocket clients
+
+## Setup
+
+No additional services required — realtime works with just PostgreSQL. The WebSocket server is built into the Truss API.
+
+## Subscribing via dashboard
+
+Navigate to **Realtime** in the sidebar. You'll see:
+- Active subscriptions and their status
+- A live event log (last 200 events)
+- Controls to subscribe/unsubscribe from tables
+
+## Subscribing via API
+
+### Create a subscription
+
+```bash
+curl -X POST http://localhost:8787/api/realtime/subscribe \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schema": "public",
+    "table": "messages"
+  }'
+```
+
+This creates a trigger on `public.messages` that fires on INSERT, UPDATE, and DELETE.
+
+### Remove a subscription
+
+```bash
+curl -X DELETE http://localhost:8787/api/realtime/subscribe \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schema": "public",
+    "table": "messages"
+  }'
+```
+
+### List subscriptions
+
+```bash
+curl http://localhost:8787/api/realtime/subscriptions
+```
+
+### Check status
+
+```bash
+curl http://localhost:8787/api/realtime/status
+```
+
+Returns the listener connection status, active channels, connected WebSocket clients, and event log size.
+
+## Connecting via WebSocket
+
+Connect to the WebSocket endpoint at `/realtime`:
+
+```javascript
+const ws = new WebSocket('ws://localhost:8787/realtime');
+
+ws.onopen = () => {
+  console.log('Connected to Truss realtime');
+};
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log('Event:', data);
+  // {
+  //   schema: "public",
+  //   table: "messages",
+  //   operation: "INSERT",
+  //   row: { id: 1, text: "Hello", created_at: "..." },
+  //   old_row: null,
+  //   timestamp: "2025-01-15T10:00:00Z"
+  // }
+};
+
+ws.onclose = () => {
+  console.log('Disconnected — will auto-reconnect');
+};
+```
+
+### Event format
+
+Each event contains:
+- `schema` — the table's schema (usually `public`)
+- `table` — the table name
+- `operation` — `INSERT`, `UPDATE`, or `DELETE`
+- `row` — the new row data (null for DELETE)
+- `old_row` — the previous row data (for UPDATE and DELETE)
+- `timestamp` — when the event occurred
+
+## Event log
+
+Truss keeps the last 200 events in memory. Fetch them via:
+
+```bash
+curl http://localhost:8787/api/realtime/events
+```
+
+Clear the log:
+
+```bash
+curl -X POST http://localhost:8787/api/realtime/clear-log
+```
+
+## Available tables
+
+List tables eligible for realtime subscriptions:
+
+```bash
+curl http://localhost:8787/api/realtime/tables
+```
+
+## How LISTEN/NOTIFY triggers work
+
+Under the hood, Truss creates a PostgreSQL trigger function for each subscription. Here is what happens step by step:
+
+1. **Trigger creation** — when you subscribe to `public.messages`, Truss runs `CREATE TRIGGER truss_rt_public_messages` on the table. The trigger fires `AFTER INSERT OR UPDATE OR DELETE`.
+2. **NOTIFY payload** — the trigger function builds a JSON payload containing `schema`, `table`, `operation`, `row` (NEW), and `old_row` (OLD), then calls `pg_notify('truss_rt_public_messages', payload)`.
+3. **LISTEN connection** — a dedicated `pg.Client` (separate from the connection pool) runs `LISTEN truss_rt_public_messages`. This connection is long-lived and auto-reconnects on failure.
+4. **Broadcast** — when a notification arrives, Truss deserializes the JSON and broadcasts it to every connected WebSocket client.
+
+The payload size is limited by PostgreSQL's 8 KB NOTIFY limit. For tables with very wide rows, only the columns that fit are included. Consider selecting specific columns in your subscription or keeping row payloads lean.
+
+## Subscription Filters
+
+By default, a subscription receives all INSERT, UPDATE, and DELETE events for the subscribed table. You can filter events by type when consuming them on the client side:
+
+```javascript
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+
+  // Only process INSERT events
+  if (data.operation !== 'INSERT') return;
+
+  // Only process events for a specific table
+  if (data.table !== 'messages') return;
+
+  // Process the event
+  handleNewMessage(data.row);
+};
+```
+
+Server-side filtering (subscribing to only specific event types) is planned for a future release. Currently, all three event types are sent for every subscription, and filtering happens on the client.
+
+## Event Log Browsing
+
+Truss keeps the last 200 events in an in-memory ring buffer. This is useful for debugging and monitoring without needing a separate logging service.
+
+### Fetch events
+
+```bash
+curl http://localhost:8787/api/realtime/events
+```
+
+Returns an array of recent events, newest first. Each entry matches the standard event format (schema, table, operation, row, old_row, timestamp).
+
+### Clear the log
+
+```bash
+curl -X POST http://localhost:8787/api/realtime/clear-log
+```
+
+The event log is in-memory only and resets when the API server restarts.
+
+### Dashboard
+
+The **Realtime** panel in the dashboard shows a live-updating event log. Events appear in real time as they occur, with color-coded operation badges (green for INSERT, yellow for UPDATE, red for DELETE).
+
+## Connecting from Client Applications
+
+### Browser (vanilla JavaScript)
+
+```javascript
+const ws = new WebSocket('ws://localhost:8787/realtime');
+
+ws.onopen = () => console.log('Connected');
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log(`${data.operation} on ${data.table}:`, data.row);
+};
+
+// Reconnect on close
+ws.onclose = () => {
+  setTimeout(() => {
+    // Re-create the WebSocket connection
+  }, 1000);
+};
+```
+
+### React hook
+
+```javascript
+import { useEffect, useState, useRef } from 'react';
+
+function useRealtime(table) {
+  const [events, setEvents] = useState([]);
+  const wsRef = useRef(null);
+
+  useEffect(() => {
+    const ws = new WebSocket('ws://localhost:8787/realtime');
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.table === table) {
+        setEvents((prev) => [data, ...prev].slice(0, 100));
+      }
+    };
+
+    return () => ws.close();
+  }, [table]);
+
+  return events;
+}
+```
+
+### Node.js (server-side)
+
+```javascript
+import WebSocket from 'ws';
+
+const ws = new WebSocket('ws://localhost:8787/realtime');
+
+ws.on('message', (raw) => {
+  const event = JSON.parse(raw.toString());
+  console.log(event);
+});
+```
+
+### Python
+
+```python
+import asyncio
+import websockets
+import json
+
+async def listen():
+    async with websockets.connect("ws://localhost:8787/realtime") as ws:
+        async for message in ws:
+            event = json.loads(message)
+            print(f"{event['operation']} on {event['table']}: {event['row']}")
+
+asyncio.run(listen())
+```
+
+## Architecture notes
+
+- The LISTEN connection is a dedicated `pg.Client` (separate from the connection pool)
+- It auto-reconnects on errors
+- Triggers are named `truss_rt_{schema}_{table}` and send to matching channels
+- Subscriptions are persisted in the database
+- Webhook triggers can also fire on realtime events (see [Webhooks](./webhooks/))

@@ -1,0 +1,134 @@
+---
+title: Troubleshooting
+description: Common issues and solutions when running Truss.
+---
+
+This page covers the most common issues you may encounter when self-hosting Truss and how to resolve them.
+
+## CSRF token mismatch
+
+**Symptoms:** `403 Forbidden` or "CSRF token mismatch" errors on login, registration, or settings forms.
+
+**Causes:**
+
+- **Cross-domain cookies:** If your dashboard and API are on different subdomains (e.g. `app.example.com` and `api.example.com`), the CSRF cookie must be set with `Domain=.example.com` so both origins can read it.
+- **Stale tokens after login:** After a successful login, the session cookie replaces the anonymous CSRF token. If a stale CSRF token remains in a duplicate cookie, the server rejects it.
+- **SameSite mismatch:** CSRF cookies should use `SameSite=Lax`. If your reverse proxy strips or rewrites cookie attributes, the browser may not send the cookie.
+
+**Solutions:**
+
+1. Ensure `CSRF_COOKIE_DOMAIN` is set to your root domain (e.g. `.example.com`).
+2. Clear all cookies and try again — duplicate cookies from previous sessions can cause mismatches.
+3. Use `parseAllCookieValues()` on the server side to handle cases where the browser sends multiple cookies with the same name.
+4. Verify your reverse proxy (Nginx, Caddy, Traefik) is not stripping `Set-Cookie` headers.
+
+---
+
+## SMTP port 465 blocked
+
+**Symptoms:** Email sending fails with connection timeout or `ECONNREFUSED` on port 465.
+
+**Cause:** Many hosting providers (Hetzner, AWS Lightsail, GCP) block outbound port 465 (implicit TLS) to prevent spam.
+
+**Solution:**
+
+Use port **587** (explicit TLS / STARTTLS) instead. Update your environment variables:
+
+```bash
+SMTP_PORT=587
+SMTP_HOST=smtp.your-provider.com
+```
+
+Port 587 with STARTTLS is the recommended standard for authenticated mail submission and is not blocked by most providers.
+
+---
+
+## Demo mode leaking into authenticated sessions
+
+**Symptoms:** After logging in, you still see the demo dashboard or get redirected to `/demo/`.
+
+**Cause:** The demo session cookie persists after login, and the session refresh logic detects the demo tenant.
+
+**Solution:**
+
+1. Clear all browser cookies for your Truss domain.
+2. Navigate directly to your dashboard URL (not `/demo/`).
+3. If the issue persists, open DevTools > Application > Cookies and delete any cookie containing `demo` or `ory_kratos_session`.
+
+The `refreshSession` guard is designed to block demo tenants on non-`/demo/` paths, but stale cookies can bypass this check.
+
+---
+
+## Session not established after login
+
+**Symptoms:** Login succeeds (Kratos returns a session), but the dashboard shows "Not authenticated" or redirects back to login.
+
+**Causes:**
+
+- **CORS misconfiguration:** The browser blocks the `Set-Cookie` header if the API origin is not in `CORS_ALLOWED_ORIGINS`.
+- **Missing credentials mode:** Fetch requests must include `credentials: 'include'` for cross-origin cookie handling.
+- **Cookie domain mismatch:** The session cookie domain must match the dashboard domain.
+
+**Solutions:**
+
+1. Verify `CORS_ALLOWED_ORIGINS` includes your dashboard URL (e.g. `https://app.example.com`).
+2. Check that the session cookie has `Domain=.example.com`, `SameSite=None`, `Secure=true`, and `HttpOnly=true`.
+3. Confirm your dashboard is served over HTTPS — browsers reject `SameSite=None` cookies on HTTP.
+4. In DevTools > Network, inspect the login response headers. Look for `Set-Cookie` and verify the browser accepts it (check the "Cookies" tab on the request).
+
+---
+
+## 502/503 from Ory services
+
+**Symptoms:** API returns `502 Bad Gateway` or `503 Service Unavailable` for authentication, authorization, or OAuth2 endpoints.
+
+**Cause:** One or more Ory services (Kratos, Keto, Hydra) are not running or not reachable from the API server.
+
+**Diagnostic steps:**
+
+1. Check service health:
+
+```bash
+# Kratos
+curl -f http://localhost:4433/health/alive
+
+# Keto
+curl -f http://localhost:4466/health/alive
+
+# Hydra (if using OAuth2)
+curl -f http://localhost:4445/health/alive
+```
+
+2. Verify environment variables point to the correct hosts:
+
+```bash
+# Required for auth
+KRATOS_PUBLIC_URL=http://localhost:4433
+KRATOS_ADMIN_URL=http://localhost:4434
+
+# Required for authorization
+KETO_READ_URL=http://localhost:4466
+KETO_WRITE_URL=http://localhost:4467
+
+# Required for OAuth2
+HYDRA_ADMIN_URL=http://localhost:4445
+```
+
+3. Check Docker container status:
+
+```bash
+docker ps --filter "name=kratos" --filter "name=keto" --filter "name=hydra"
+```
+
+4. Review service logs for startup errors:
+
+```bash
+docker logs truss-kratos-1 --tail 50
+docker logs truss-keto-1 --tail 50
+```
+
+**Common fixes:**
+
+- Restart the crashed service: `docker compose up -d kratos keto hydra`
+- If Kratos fails with a migration error, run: `docker compose exec kratos kratos migrate sql -e --yes`
+- Ensure no port conflicts on 4433, 4434, 4445, 4466, 4467.

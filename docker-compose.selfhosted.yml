@@ -1,0 +1,552 @@
+# ─── Truss Self-Hosted Docker Compose ───
+# One-command deployment: docker compose -f docker-compose.selfhosted.yml --env-file .env.selfhosted up -d
+#
+# Services:
+#   postgres        — PostgreSQL 16 (shared by Truss API, Kratos, Keto)
+#   kratos-migrate  — One-shot: runs Kratos DB migrations then exits
+#   kratos          — Ory Kratos (authentication / identity management)
+#   keto-migrate    — One-shot: runs Keto DB migrations then exits
+#   keto            — Ory Keto (authorization / permissions)
+#   minio           — MinIO S3-compatible object storage
+#   flagd-init      — One-shot: seeds initial flag config
+#   flagd           — Feature flag evaluation engine (CNCF/OpenFeature)
+#   truss-api       — Truss backend API (Express / Node.js)
+#   truss-dashboard — Truss dashboard SPA (Nginx serving static build)
+#
+# Exposed ports:
+#   3000  — Dashboard (the ONLY port that should face the internet)
+#   All other services are internal to the Docker network.
+#   See comments in each service section to expose additional ports if needed.
+
+name: truss
+
+services:
+  # ────────────────────────────────────────────
+  # PostgreSQL — shared database for all services
+  # ────────────────────────────────────────────
+  # Truss API, Kratos, and Keto all connect to this instance.
+  # Keto uses a separate `keto` search_path to avoid table collisions.
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: truss
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required - set it in .env.selfhosted}
+      POSTGRES_DB: truss
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U truss -d truss"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - truss_postgres_data:/var/lib/postgresql/data
+
+  # ────────────────────────────────────────────
+  # Ory Kratos — Authentication / Identity
+  # ────────────────────────────────────────────
+  # Handles user registration, login, password recovery, MFA, passkeys.
+  # Migration runs as a one-shot init container before Kratos starts.
+
+  kratos-migrate:
+    image: oryd/kratos:v1.2.0
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DSN: postgres://truss:${DB_PASSWORD:-truss}@postgres:5432/truss?sslmode=disable
+    command:
+      - migrate
+      - sql
+      - -e
+      - --yes
+      - postgres://truss:${DB_PASSWORD:-truss}@postgres:5432/truss?sslmode=disable
+
+  kratos:
+    image: oryd/kratos:v1.2.0
+    restart: unless-stopped
+    depends_on:
+      kratos-migrate:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        # Bootstrap Kratos config inline — no bind mounts needed.
+        # This pattern works on any Docker host without volume mapping config files.
+        mkdir -p /tmp/kratos
+        cat >/tmp/kratos/identity.schema.json <<'JSON'
+        {
+          "$$id": "https://schemas.ory.sh/presets/kratos/quickstart/email-password/identity.schema.json",
+          "$$schema": "http://json-schema.org/draft-07/schema#",
+          "title": "Person",
+          "type": "object",
+          "properties": {
+            "traits": {
+              "type": "object",
+              "properties": {
+                "email": {
+                  "type": "string",
+                  "format": "email",
+                  "ory.sh/kratos": {
+                    "credentials": {
+                      "password": { "identifier": true },
+                      "code": { "identifier": true, "via": "email" },
+                      "passkey": { "display_name": true },
+                      "webauthn": { "identifier": true },
+                      "totp": { "account_name": true }
+                    },
+                    "verification": { "via": "email" },
+                    "recovery": { "via": "email" }
+                  }
+                }
+              },
+              "required": ["email"],
+              "additionalProperties": false
+            }
+          }
+        }
+        JSON
+        cat >/tmp/kratos/kratos.yml <<'YAML'
+        version: v0.13.0
+        dsn: postgres://truss:${DB_PASSWORD:-truss}@postgres:5432/truss?sslmode=disable
+        serve:
+          public:
+            base_url: ${TRUSS_PUBLIC_URL:-http://localhost:3000}/.ory/kratos/public/
+            cors:
+              enabled: true
+              allowed_origins:
+                - "${TRUSS_PUBLIC_URL:-http://localhost:3000}"
+              allowed_methods: ["POST","GET","PUT","PATCH","DELETE"]
+              allowed_headers: ["Authorization","Cookie","Content-Type","X-CSRF-Token"]
+              exposed_headers: ["Content-Type","Set-Cookie"]
+          admin:
+            base_url: http://kratos:4434/
+        selfservice:
+          default_browser_return_url: ${TRUSS_PUBLIC_URL:-http://localhost:3000}/
+          methods:
+            password:
+              enabled: true
+              config:
+                haveibeenpwned_enabled: true
+                min_password_length: 8
+                identifier_similarity_check_enabled: true
+            code:
+              enabled: true
+              config:
+                lifespan: 15m
+            totp:
+              enabled: true
+              config:
+                issuer: Truss
+            passkey:
+              enabled: true
+              config:
+                rp:
+                  display_name: Truss
+                  id: localhost
+                  origins:
+                    - "${TRUSS_PUBLIC_URL:-http://localhost:3000}"
+            lookup_secret:
+              enabled: true
+          flows:
+            login:
+              ui_url: ${TRUSS_PUBLIC_URL:-http://localhost:3000}/login
+              lifespan: 10m
+            registration:
+              ui_url: ${TRUSS_PUBLIC_URL:-http://localhost:3000}/register
+              lifespan: 10m
+              after:
+                password:
+                  hooks:
+                    - hook: session
+            verification:
+              enabled: true
+              ui_url: ${TRUSS_PUBLIC_URL:-http://localhost:3000}/verification
+              use: code
+            recovery:
+              enabled: true
+              ui_url: ${TRUSS_PUBLIC_URL:-http://localhost:3000}/recovery
+              use: code
+            settings:
+              ui_url: ${TRUSS_PUBLIC_URL:-http://localhost:3000}/settings
+              required_aal: highest_available
+        session:
+          lifespan: 24h
+          cookie:
+            name: ory_kratos_session
+            same_site: Lax
+            domain: ""
+        courier:
+          smtp:
+            # Configure SMTP in .env.selfhosted for email verification/recovery.
+            # Without SMTP, verification and recovery emails will not be sent.
+            connection_uri: smtp://not-configured:25
+            from_address: noreply@truss.local
+            from_name: Truss
+        identity:
+          default_schema_id: default
+          schemas:
+            - id: default
+              url: file:///tmp/kratos/identity.schema.json
+        secrets:
+          cookie:
+            - "${KRATOS_COOKIE_SECRET:-change-me-cookie-secret-32chars!}"
+          cipher:
+            - "${KRATOS_CIPHER_SECRET:-change-me-cipher-secret-32chars!}"
+        log:
+          level: info
+          format: json
+        YAML
+        exec kratos serve all --config /tmp/kratos/kratos.yml
+    # Kratos public API is internal — Nginx proxies auth requests.
+    # Uncomment ONLY if external apps need direct Kratos access.
+    # ports:
+    #   - "4433:4433"
+    expose:
+      - "4433"
+      - "4434"
+
+  # ────────────────────────────────────────────
+  # Ory Keto — Authorization / Permissions
+  # ────────────────────────────────────────────
+  # Relation-based access control (ReBAC). Uses a separate `keto` schema
+  # in the shared Postgres database to avoid table collisions with Kratos.
+
+  postgres-init:
+    # One-shot job: create the keto + hydra schemas so their migrations can use search_path.
+    image: postgres:16-alpine
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        psql "postgres://truss:${DB_PASSWORD:-truss}@postgres:5432/truss?sslmode=disable" \
+          -c "CREATE SCHEMA IF NOT EXISTS keto; CREATE SCHEMA IF NOT EXISTS hydra;"
+        echo "keto + hydra schemas ready"
+
+  keto-migrate:
+    image: oryd/keto:v0.12.0-alpha.0
+    restart: "no"
+    depends_on:
+      postgres-init:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /tmp/keto
+        cat >/tmp/keto/keto.yml <<'YAML'
+        dsn: postgres://truss:${DB_PASSWORD:-truss}@postgres:5432/truss?sslmode=disable&search_path=keto
+        namespaces:
+          - id: 0
+            name: default
+        YAML
+        keto migrate up -c /tmp/keto/keto.yml --yes
+
+  keto:
+    image: oryd/keto:v0.12.0-alpha.0
+    restart: unless-stopped
+    depends_on:
+      keto-migrate:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /tmp/keto
+        cat >/tmp/keto/keto.yml <<'YAML'
+        dsn: postgres://truss:${DB_PASSWORD:-truss}@postgres:5432/truss?sslmode=disable&search_path=keto
+        serve:
+          read:
+            host: 0.0.0.0
+            port: 4466
+          write:
+            host: 0.0.0.0
+            port: 4467
+        namespaces:
+          - id: 0
+            name: default
+        log:
+          level: info
+          format: json
+        YAML
+        exec keto serve all --config /tmp/keto/keto.yml
+    # Keto ports are internal-only — accessed by the API service, not exposed to host.
+    expose:
+      - "4466"
+      - "4467"
+
+  # ────────────────────────────────────────────
+  # Ory Hydra — OAuth2 / OIDC
+  # ────────────────────────────────────────────
+  # Be your own OAuth2 / OpenID Connect provider. Uses a separate `hydra` schema
+  # in the shared Postgres. Login + consent are bridged to Truss via the API.
+
+  hydra-migrate:
+    image: oryd/hydra:v2.2.0
+    restart: "no"
+    depends_on:
+      postgres-init:
+        condition: service_completed_successfully
+    environment:
+      DSN: "postgres://truss:${DB_PASSWORD:-truss}@postgres:5432/truss?sslmode=disable&search_path=hydra"
+    command: migrate sql -e --yes
+
+  hydra:
+    image: oryd/hydra:v2.2.0
+    restart: unless-stopped
+    depends_on:
+      hydra-migrate:
+        condition: service_completed_successfully
+    environment:
+      DSN: "postgres://truss:${DB_PASSWORD:-truss}@postgres:5432/truss?sslmode=disable&search_path=hydra"
+      # Generate with: openssl rand -hex 16
+      SECRETS_SYSTEM: "${HYDRA_SECRETS_SYSTEM:?HYDRA_SECRETS_SYSTEM is required - generate with openssl rand -hex 16}"
+      URLS_SELF_ISSUER: "${HYDRA_ISSUER_URL:-http://localhost:4444}"
+      URLS_LOGIN: "${TRUSS_PUBLIC_URL:-http://localhost:3000}/api/hydra/bridge/login"
+      URLS_CONSENT: "${TRUSS_PUBLIC_URL:-http://localhost:3000}/api/hydra/bridge/consent"
+    # --dev allows the http issuer used by default; front Hydra with TLS and set
+    # HYDRA_ISSUER_URL to a public https URL in production.
+    command: serve all --dev
+    # OAuth2 public endpoints (token, auth, discovery, jwks) — apps reach Hydra here.
+    ports:
+      - "4444:4444"
+    # Admin API is internal-only — used by the Truss API, never exposed.
+    expose:
+      - "4445"
+
+  # ────────────────────────────────────────────
+  # Ory Oathkeeper — API Gateway
+  # ────────────────────────────────────────────
+  # Identity & Access proxy. Stateless — access rules are managed by the Truss
+  # API (truss_internal.gateway_rules) and synced to Oathkeeper at runtime.
+
+  oathkeeper:
+    image: oryd/oathkeeper:v0.40.7
+    restart: unless-stopped
+    depends_on:
+      kratos:
+        condition: service_started
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /tmp/oathkeeper
+        cat >/tmp/oathkeeper/rules.json <<'JSON'
+        []
+        JSON
+        cat >/tmp/oathkeeper/config.yaml <<'YAML'
+        log: { level: info, format: json }
+        serve:
+          proxy: { port: 4455 }
+          api: { port: 4456 }
+        access_rules:
+          repositories:
+            - file:///tmp/oathkeeper/rules.json
+        errors:
+          fallback: [json]
+          handlers:
+            json: { enabled: true, config: { verbose: true } }
+        authenticators:
+          noop: { enabled: true }
+          unauthorized: { enabled: true }
+          anonymous: { enabled: true, config: { subject: guest } }
+          cookie_session:
+            enabled: true
+            config:
+              check_session_url: http://kratos:4433/sessions/whoami
+              preserve_path: true
+              only: [ory_kratos_session]
+        authorizers:
+          allow: { enabled: true }
+          deny: { enabled: true }
+        mutators:
+          noop: { enabled: true }
+          header:
+            enabled: true
+            config:
+              headers:
+                X-User: "{{ print .Subject }}"
+        YAML
+        exec oathkeeper serve --config /tmp/oathkeeper/config.yaml
+    # Gateway proxy (4455) + admin API (4456) are internal — the Truss API manages rules.
+    expose:
+      - "4455"
+      - "4456"
+
+  # ────────────────────────────────────────────
+  # MinIO — S3-compatible object storage
+  # ────────────────────────────────────────────
+  # Provides file storage with S3 API. The console (port 9001) is exposed
+  # for direct bucket management; the S3 API (9000) is internal to Docker.
+
+  minio:
+    image: minio/minio:RELEASE.2024-09-22T00-33-43Z
+    restart: unless-stopped
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required - set it in .env.selfhosted}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required - set it in .env.selfhosted}
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # S3 API + Console are internal only — access via Truss dashboard.
+    # Uncomment ports below ONLY if you need direct S3 SDK access or MinIO console.
+    # WARNING: Secure with strong credentials before exposing to the network.
+    # ports:
+    #   - "9000:9000"   # S3 API (for presigned URLs from external apps)
+    #   - "9001:9001"   # MinIO Console (web UI)
+    expose:
+      - "9000"
+      - "9001"
+    volumes:
+      - truss_minio_data:/data
+
+  # ────────────────────────────────────────────
+  # flagd — Feature flag evaluation engine
+  # ────────────────────────────────────────────
+  # CNCF/OpenFeature feature flag daemon. Truss API syncs flag definitions
+  # to flagd; client SDKs evaluate flags via gRPC/HTTP on port 8013.
+
+  flagd-init:
+    image: alpine:3.20
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ ! -f /etc/flagd/flags.flagd.json ]; then
+          mkdir -p /etc/flagd
+          cat >/etc/flagd/flags.flagd.json <<'JSON'
+        {
+          "$schema": "https://flagd.dev/schema/v0/flags.json",
+          "flags": {
+            "truss-healthcheck": {
+              "state": "ENABLED",
+              "variants": { "on": true, "off": false },
+              "defaultVariant": "on"
+            }
+          }
+        }
+        JSON
+          echo "flagd: seeded initial flag config"
+        else
+          echo "flagd: config already exists, skipping seed"
+        fi
+    volumes:
+      - flagd_data:/etc/flagd
+
+  flagd:
+    image: ghcr.io/open-feature/flagd:v0.11.1
+    restart: unless-stopped
+    depends_on:
+      flagd-init:
+        condition: service_completed_successfully
+    command:
+      - start
+      - --uri
+      - file:/etc/flagd/flags.flagd.json
+      - --port
+      - "8013"
+      - --management-port
+      - "8014"
+      - --log-format
+      - json
+    volumes:
+      - flagd_data:/etc/flagd
+    expose:
+      - "8013"
+      - "8014"
+
+  # ────────────────────────────────────────────
+  # Truss API — Express / Node.js backend
+  # ────────────────────────────────────────────
+  # Handles all dashboard API requests, SQL workbench, client API,
+  # WebSocket realtime, and orchestrates Kratos/Keto/MinIO.
+
+  truss-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kratos:
+        condition: service_started
+      keto:
+        condition: service_started
+      hydra:
+        condition: service_started
+      oathkeeper:
+        condition: service_started
+      minio:
+        condition: service_healthy
+      flagd:
+        condition: service_started
+    environment:
+      # ── Self-hosted mode flags ──
+      TRUSS_SELF_HOSTED: "true"
+      TRUSS_AUTH_REQUIRED: "true"
+      # Comma-separated Kratos identity IDs granted admin powers (DB roles, migrations,
+      # backups, authz rules). Register first, copy your ID from the Authentication panel.
+      TRUSS_ADMIN_IDENTITY_IDS: "${TRUSS_ADMIN_IDENTITY_IDS:-}"
+      NODE_ENV: production
+      API_PORT: "8787"
+
+      # ── Database ──
+      DATABASE_URL: postgres://truss:${DB_PASSWORD}@postgres:5432/truss?sslmode=disable
+
+      # ── Security ──
+      # Generate with: openssl rand -hex 32
+      ENCRYPTION_KEY: "${ENCRYPTION_KEY:?ENCRYPTION_KEY is required - generate with openssl rand -hex 32}"
+
+      # ── Ory Kratos (auth) — internal Docker DNS ──
+      KRATOS_PUBLIC_URL: http://kratos:4433
+      KRATOS_ADMIN_URL: http://kratos:4434
+
+      # ── Ory Keto (authz) — internal Docker DNS ──
+      KETO_READ_URL: http://keto:4466
+      KETO_WRITE_URL: http://keto:4467
+
+      # ── Ory Hydra (OAuth2/OIDC) — internal Docker DNS ──
+      HYDRA_PUBLIC_URL: http://hydra:4444
+      HYDRA_ADMIN_URL: http://hydra:4445
+
+      # ── Ory Oathkeeper (API gateway) — internal Docker DNS ──
+      OATHKEEPER_PROXY_URL: http://oathkeeper:4455
+      OATHKEEPER_ADMIN_URL: http://oathkeeper:4456
+
+      # ── MinIO (storage) — internal Docker DNS ──
+      MINIO_S3_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+
+      # ── flagd (feature flags) — internal Docker DNS ──
+      FLAGD_HOST: http://flagd
+      FLAGD_PORT: "8013"
+    # API port is internal — Nginx proxies /api and /v1 to it.
+    expose:
+      - "8787"
+
+  # ────────────────────────────────────────────
+  # Truss Dashboard — React SPA served by Nginx
+  # ────────────────────────────────────────────
+  # Built with VITE_SELF_HOSTED=true (hides billing UI, org switcher).
+  # Nginx serves the static build and proxies API/WebSocket requests.
+
+  truss-dashboard:
+    build:
+      context: .
+      dockerfile: selfhosted/Dockerfile.dashboard
+    restart: unless-stopped
+    depends_on:
+      - truss-api
+    ports:
+      # Main entry point — users access the dashboard here.
+      - "3000:80"
+
+volumes:
+  truss_postgres_data:
+  truss_minio_data:
+  flagd_data:

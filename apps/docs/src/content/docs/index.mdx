@@ -1,0 +1,56 @@
+---
+title: Welcome to Truss
+description: The open-source backend you self-host. Postgres, Auth, Permissions, Storage, Realtime — one dashboard you own.
+template: splash
+hero:
+  tagline: Postgres, Auth, OAuth2, Permissions, S3 Storage, Feature Flags, Realtime, and Webhooks — one dashboard you own, self-hosted.
+  actions:
+    - text: Get Started
+      link: ./getting-started/quickstart/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/binarysquad/truss
+      icon: external
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+**Free and open source** — self-host the full platform on your own infrastructure.
+
+## What is Truss?
+
+Truss is the open-source, self-hosted backend console. Think Supabase or Firebase, but you run it yourself — with SSO, ReBAC permissions, OAuth2, API gateway, and feature flags all included in the core.
+
+It provides a unified dashboard and client API for:
+
+- **PostgreSQL** — SQL workbench, schema browser, ERD visualizer, pgvector, full-text search, cron jobs
+- **Authentication** — Email/password and social login (powered by Ory Kratos)
+- **Authorization** — Relation-based access control / ReBAC (powered by Ory Keto)
+- **Storage** — S3-compatible file storage with presigned URLs (powered by MinIO)
+- **Realtime** — WebSocket subscriptions via PostgreSQL LISTEN/NOTIFY
+- **Webhooks** — HTTP callbacks on database changes with HMAC signing
+
+## Client API
+
+Every feature is accessible through a REST API on port 8787. Two API layers:
+
+- **Data API** (`/v1/db/:table`, `/v1/sql`) — CRUD your tables, run SQL, call functions
+- **Management API** (`/v1/status`, `/v1/projects`, etc.) — Platform management for CLI, bots, and LLMs
+
+All client API endpoints require an API key passed via the `apikey` header.
+
+<CardGrid>
+  <Card title="Quickstart" icon="rocket">
+    Get Truss running locally in 5 minutes. [Start here](./getting-started/quickstart/).
+  </Card>
+  <Card title="Configuration" icon="setting">
+    Wire up Postgres, auth, storage, and more. [Configuration guide](./getting-started/configuration/).
+  </Card>
+  <Card title="Database" icon="document">
+    SQL-over-HTTP, Auto-REST, pgvector, full-text search. [Database guide](./guides/database/).
+  </Card>
+  <Card title="API Reference" icon="open-book">
+    Full endpoint reference for the client API. [REST API docs](./api-reference/rest-api/).
+  </Card>
+</CardGrid>

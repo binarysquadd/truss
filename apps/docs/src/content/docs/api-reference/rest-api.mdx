@@ -1,0 +1,190 @@
+---
+title: REST API
+description: Complete reference for the Truss client API endpoints.
+---
+
+The Truss API runs on port 8787. There are two API layers:
+
+- **Client API** (`/v1/*`) — for your applications, requires API keys
+- **Dashboard API** (`/api/*`) — for the Truss dashboard, uses session cookies
+
+All client API endpoints require an API key via the `apikey` header.
+
+## Authentication
+
+```bash
+# All /v1/* requests need an API key
+curl http://localhost:8787/v1/db/users \
+  -H "apikey: truss_pk_your_key"
+```
+
+Two key types: `anon` (prefix `truss_pk_`) respects RLS, `service_role` (prefix `truss_sk_`) bypasses RLS. See [API Keys](../guides/api-keys/).
+
+## Data API
+
+### SQL-over-HTTP
+
+**`POST /v1/sql`** — Execute arbitrary SQL (service_role only)
+
+```json
+{
+  "sql": "SELECT * FROM users WHERE active = $1",
+  "params": [true],
+  "row_limit": 1000,
+  "timeout": 10000
+}
+```
+
+Response:
+```json
+{
+  "rows": [...],
+  "rowCount": 42,
+  "columns": [{"name": "id", "dataTypeID": 23, "typeName": "int4"}],
+  "command": "SELECT"
+}
+```
+
+**`POST /v1/sql/transaction`** — Execute multiple statements in a transaction (service_role only)
+
+```json
+{
+  "statements": [
+    {"sql": "INSERT INTO orders (total) VALUES ($1)", "params": [99.99]},
+    {"sql": "UPDATE inventory SET count = count - 1 WHERE id = $1", "params": [5]}
+  ]
+}
+```
+
+Max 20 statements. Rolls back on any failure.
+
+### Auto-REST (CRUD)
+
+| Method | Endpoint | Description | Key type |
+|--------|----------|-------------|----------|
+| `GET` | `/v1/db/:table` | Select rows | anon or service_role |
+| `POST` | `/v1/db/:table` | Insert row(s) | anon or service_role |
+| `PATCH` | `/v1/db/:table` | Update rows (filter required) | anon or service_role |
+| `DELETE` | `/v1/db/:table` | Delete rows (filter required) | anon or service_role |
+| `POST` | `/v1/db/rpc/:function` | Call a Postgres function | anon or service_role |
+
+#### Query parameters for GET
+
+| Param | Example | Description |
+|-------|---------|-------------|
+| `select` | `select=id,name,email` | Columns to return |
+| `order` | `order=created_at.desc` | Sort order |
+| `limit` | `limit=50` | Max rows (default 1000, max 10000) |
+| `offset` | `offset=100` | Skip rows |
+| Filter | `status=eq.active` | Where clause (see [filter operators](../guides/database/#filter-operators)) |
+
+#### Filter operators
+
+`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `is`, `in`
+
+Examples: `?age=gt.18`, `?name=ilike.*john*`, `?id=in.(1,2,3)`, `?deleted=is.null`
+
+## Management API
+
+All management endpoints require a `service_role` key.
+
+### Platform
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/v1/status` | Comprehensive platform overview |
+| `GET` | `/v1/modules` | Enabled modules |
+| `GET` | `/v1/metrics` | API consumption metrics |
+| `GET` | `/v1/audit-logs` | Audit log entries |
+
+### Projects
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/v1/projects` | List all projects |
+| `GET` | `/v1/projects/:id` | Full project detail with keys, tables, storage |
+| `PATCH` | `/v1/projects/:id` | Update project (name, status) |
+
+### Database
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/v1/database/schema` | Full schema introspection |
+| `GET` | `/v1/database/tables/:schema/:table` | Table detail (columns, PKs, FKs, indexes, triggers, RLS) |
+| `GET` | `/v1/branches` | List database branches |
+| `GET` | `/v1/backups` | List backups |
+
+### API Keys
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/v1/keys` | List all keys |
+| `POST` | `/v1/keys` | Create a key |
+| `DELETE` | `/v1/keys/:id` | Revoke a key |
+| `POST` | `/v1/keys/:id/rotate` | Rotate a key |
+
+### Auth
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/v1/auth/identities` | List identities |
+| `GET` | `/v1/auth/identities/:id` | Identity detail |
+
+### Storage
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/v1/storage/buckets` | List buckets with object counts |
+
+### Webhooks
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/v1/webhooks` | List webhooks with delivery stats |
+| `GET` | `/v1/webhooks/:id` | Webhook detail with recent logs |
+
+### Realtime
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/v1/realtime` | Realtime engine status + subscriptions |
+
+### OAuth2
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/v1/oauth2/clients` | List OAuth2 clients |
+| `POST` | `/v1/oauth2/clients` | Create OAuth2 client |
+| `DELETE` | `/v1/oauth2/clients/:id` | Delete OAuth2 client |
+| `GET` | `/v1/oauth2/discovery` | OIDC discovery document |
+
+### API Gateway
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/v1/gateway/health` | Gateway health check |
+| `GET` | `/v1/gateway/rules` | List access rules |
+
+## Error format
+
+All errors return a consistent JSON structure:
+
+```json
+{
+  "error": "Human-readable error message",
+  "code": "POSTGRES_ERROR_CODE",
+  "detail": "Additional detail from Postgres",
+  "hint": "Suggested fix"
+}
+```
+
+## Rate limiting
+
+All `/v1/*` endpoints are rate-limited per API key. Default: 100 requests/minute. Headers:
+
+```
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+```
+
+Returns `429 Too Many Requests` when exceeded.

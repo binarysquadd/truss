@@ -1,0 +1,485 @@
+---
+title: Feature Flags
+description: Manage feature flags, targeting rules, percentage rollouts, and A/B variants powered by flagd and OpenFeature.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Truss provides feature flag management powered by [flagd](https://flagd.dev/) (CNCF/OpenFeature). Manage flags, targeting rules, percentage rollouts, A/B variants, and segments from the dashboard. Client apps evaluate flags using standard [OpenFeature](https://openfeature.dev/) SDKs.
+
+## Architecture
+
+Truss stores flag definitions in Postgres. When you create or update a flag, Truss syncs the configuration to flagd, which handles evaluation at the edge. Client SDKs connect to flagd via gRPC or HTTP for low-latency flag evaluation.
+
+```
+┌─────────────┐      ┌───────────┐      ┌───────────┐
+│  Dashboard   │─────▶│  Truss API │─────▶│ Postgres  │
+│  or API      │      │  (Express) │      │ (source   │
+└─────────────┘      └─────┬─────┘      │  of truth)│
+                           │             └─────┬─────┘
+                           │ sync              │
+                           ▼                   ▼
+                     ┌───────────┐      ┌───────────┐
+                     │   flagd   │◀─────│  flag cfg  │
+                     │ (evaluator)│      │  (JSON)   │
+                     └─────┬─────┘      └───────────┘
+                           │
+                    gRPC / HTTP
+                           │
+                     ┌─────▼─────┐
+                     │ Your App  │
+                     │ (OF SDK)  │
+                     └───────────┘
+```
+
+## Setup
+
+Add these environment variables to your Truss deployment:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FLAGD_HOST` | `localhost` | Hostname of the flagd instance |
+| `FLAGD_PORT` | `8013` | gRPC port for flagd evaluation |
+| `FLAGD_HTTP_PORT` | `8016` | HTTP port for flagd evaluation (REST fallback) |
+
+If you are running Truss via Docker Compose, flagd runs as a sidecar container and these defaults work out of the box.
+
+## Flag types
+
+Truss supports four flag value types, matching the OpenFeature specification:
+
+| Type | Example default | Use case |
+|------|----------------|----------|
+| **Boolean** | `true` / `false` | Kill switches, feature gates |
+| **String** | `"banner-v2"` | UI variants, theme names |
+| **Number** | `50` | Rate limits, thresholds, timeouts |
+| **Object** | `{"color": "#9f1239", "size": "lg"}` | Complex configuration bundles |
+
+## Creating flags
+
+### Via dashboard
+
+Navigate to **Feature Flags** in the sidebar. Click **Create Flag** and configure:
+
+- **Key** — unique identifier (e.g., `new-checkout-flow`)
+- **Type** — Boolean, String, Number, or Object
+- **Default value** — returned when no targeting rules match
+- **Variants** — named values the flag can resolve to (e.g., `on`/`off`, `control`/`treatment`)
+- **State** — ENABLED or DISABLED
+- **Description** — optional human-readable note
+
+### Via API
+
+```bash
+# Create a boolean feature flag
+curl -X POST http://localhost:8787/api/flags \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "new-checkout-flow",
+    "type": "boolean",
+    "description": "Enable the redesigned checkout experience",
+    "defaultVariant": "off",
+    "variants": {
+      "on": true,
+      "off": false
+    },
+    "state": "ENABLED"
+  }'
+
+# Create a string flag with multiple variants
+curl -X POST http://localhost:8787/api/flags \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "hero-banner",
+    "type": "string",
+    "description": "A/B test for landing page hero",
+    "defaultVariant": "control",
+    "variants": {
+      "control": "banner-original",
+      "treatment-a": "banner-gradient",
+      "treatment-b": "banner-minimal"
+    },
+    "state": "ENABLED"
+  }'
+```
+
+## Targeting rules
+
+Targeting rules let you return different flag variants based on evaluation context attributes (user ID, email, plan, country, etc.). Rules use [JsonLogic](https://jsonlogic.com/) expressions under the hood.
+
+### Attribute targeting
+
+Match users by context attributes:
+
+```json
+{
+  "if": [
+    { "==": [{ "var": "plan" }, "pro"] },
+    "on",
+    "off"
+  ]
+}
+```
+
+### String operators
+
+Use `starts_with`, `ends_with`, and `in` for flexible string matching:
+
+```json
+{
+  "if": [
+    { "starts_with": [{ "var": "email" }, "admin@"] },
+    "on",
+    "off"
+  ]
+}
+```
+
+```json
+{
+  "if": [
+    { "ends_with": [{ "var": "email" }, "@acme.com"] },
+    "on",
+    "off"
+  ]
+}
+```
+
+### Semantic version targeting
+
+Target users based on app version using `sem_ver`:
+
+```json
+{
+  "if": [
+    { "sem_ver": [{ "var": "appVersion" }, ">=", "2.0.0"] },
+    "on",
+    "off"
+  ]
+}
+```
+
+### Boolean logic (AND / OR)
+
+Combine conditions with `and` / `or`:
+
+```json
+{
+  "if": [
+    {
+      "and": [
+        { "==": [{ "var": "plan" }, "pro"] },
+        { "ends_with": [{ "var": "email" }, "@acme.com"] }
+      ]
+    },
+    "on",
+    "off"
+  ]
+}
+```
+
+```json
+{
+  "if": [
+    {
+      "or": [
+        { "==": [{ "var": "country" }, "US"] },
+        { "==": [{ "var": "country" }, "CA"] }
+      ]
+    },
+    "on",
+    "off"
+  ]
+}
+```
+
+## Percentage rollouts
+
+### Fractional evaluation
+
+Roll out a flag to a percentage of users using `fractional`. Bucketing is sticky based on the targeting key (typically user ID), so the same user always gets the same variant.
+
+```json
+{
+  "fractional": [
+    { "cat": [{ "var": "$flagd.flagKey" }, { "var": "targetingKey" }] },
+    ["on", 25],
+    ["off", 75]
+  ]
+}
+```
+
+This rolls out the `on` variant to 25% of users.
+
+### Multi-variant A/B testing
+
+Split traffic across more than two variants:
+
+```json
+{
+  "fractional": [
+    { "cat": [{ "var": "$flagd.flagKey" }, { "var": "targetingKey" }] },
+    ["control", 50],
+    ["treatment-a", 25],
+    ["treatment-b", 25]
+  ]
+}
+```
+
+Weights must sum to 100. The bucketing hash is deterministic -- the same user always lands in the same bucket unless you change the seed or weights.
+
+## Segments
+
+Segments are reusable targeting rules that can be shared across multiple flags. They use the `$evaluators` mechanism in flagd.
+
+### Creating segments via dashboard
+
+Navigate to **Feature Flags > Segments**. Click **Create Segment** and define:
+
+- **Key** — unique identifier (e.g., `beta-testers`)
+- **Rules** — JsonLogic expression that defines segment membership
+
+### Creating segments via API
+
+```bash
+curl -X POST http://localhost:8787/api/flags/segments \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "beta-testers",
+    "rules": {
+      "or": [
+        { "ends_with": [{ "var": "email" }, "@acme.com"] },
+        { "in": [{ "var": "userId" }, ["user_001", "user_002", "user_003"]] }
+      ]
+    }
+  }'
+```
+
+### Using segments in flag rules
+
+Reference a segment with `$ref`:
+
+```json
+{
+  "if": [
+    { "$ref": "beta-testers" },
+    "on",
+    "off"
+  ]
+}
+```
+
+## Environments
+
+Flags support separate configurations per environment. Each environment maintains its own state, targeting rules, and default variants.
+
+| Environment | Description |
+|-------------|-------------|
+| `dev` | Local development -- all flags default to ENABLED |
+| `staging` | Pre-production testing with production-like targeting |
+| `production` | Live traffic -- changes require confirmation |
+
+### Promoting configurations
+
+```bash
+# Copy flag config from staging to production
+curl -X POST http://localhost:8787/api/flags/new-checkout-flow/promote \
+  -H "Content-Type: application/json" \
+  -d '{
+    "from": "staging",
+    "to": "production"
+  }'
+```
+
+From the dashboard, use the **Promote** button on any flag's detail page to copy its configuration between environments.
+
+## Evaluation
+
+### Via OpenFeature SDKs
+
+<Tabs>
+  <TabItem label="JavaScript">
+```javascript
+import { OpenFeature } from '@openfeature/server-sdk';
+import { FlagdProvider } from '@openfeature/flagd-provider';
+
+// Connect to flagd
+OpenFeature.setProvider(new FlagdProvider({
+  host: 'localhost',
+  port: 8013,
+}));
+
+const client = OpenFeature.getClient();
+
+// Boolean evaluation
+const showCheckout = await client.getBooleanValue(
+  'new-checkout-flow',
+  false,
+  { targetingKey: userId, plan: 'pro', email: user.email }
+);
+
+// String evaluation
+const banner = await client.getStringValue(
+  'hero-banner',
+  'banner-original',
+  { targetingKey: userId }
+);
+
+// Number evaluation
+const rateLimit = await client.getNumberValue(
+  'api-rate-limit',
+  100,
+  { targetingKey: userId, plan: user.plan }
+);
+```
+  </TabItem>
+  <TabItem label="Python">
+```python
+from openfeature import api
+from openfeature.contrib.provider.flagd import FlagdProvider
+from openfeature.api import EvaluationContext
+
+# Connect to flagd
+api.set_provider(FlagdProvider(
+    host="localhost",
+    port=8013,
+))
+
+client = api.get_client()
+
+# Boolean evaluation
+show_checkout = client.get_boolean_value(
+    "new-checkout-flow",
+    False,
+    EvaluationContext(
+        targeting_key=user_id,
+        attributes={"plan": "pro", "email": user.email},
+    ),
+)
+
+# String evaluation
+banner = client.get_string_value(
+    "hero-banner",
+    "banner-original",
+    EvaluationContext(targeting_key=user_id),
+)
+```
+  </TabItem>
+  <TabItem label="Go">
+```go
+package main
+
+import (
+	"context"
+	"log"
+
+	flagd "github.com/open-feature/go-sdk-contrib/providers/flagd/pkg"
+	"github.com/open-feature/go-sdk/openfeature"
+)
+
+func main() {
+	provider := flagd.NewProvider(
+		flagd.WithHost("localhost"),
+		flagd.WithPort(8013),
+	)
+	openfeature.SetProvider(provider)
+	client := openfeature.NewClient("my-app")
+
+	// Boolean evaluation
+	ctx := openfeature.NewEvaluationContext(
+		userID,
+		map[string]interface{}{
+			"plan":  "pro",
+			"email": user.Email,
+		},
+	)
+	showCheckout, err := client.BooleanValue(
+		context.Background(), "new-checkout-flow", false, ctx,
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// String evaluation
+	banner, _ := client.StringValue(
+		context.Background(), "hero-banner", "banner-original", ctx,
+	)
+}
+```
+  </TabItem>
+</Tabs>
+
+### Via API
+
+For environments where an OpenFeature SDK is not available, evaluate flags directly through the Truss API:
+
+```bash
+# Evaluate a single flag
+curl -X POST http://localhost:8787/api/flags/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "flagKey": "new-checkout-flow",
+    "context": {
+      "targetingKey": "user_123",
+      "plan": "pro",
+      "email": "alice@acme.com"
+    }
+  }'
+```
+
+Response:
+
+```json
+{
+  "key": "new-checkout-flow",
+  "variant": "on",
+  "value": true,
+  "reason": "TARGETING_MATCH"
+}
+```
+
+```bash
+# Bulk evaluate multiple flags
+curl -X POST http://localhost:8787/api/flags/evaluate/bulk \
+  -H "Content-Type: application/json" \
+  -d '{
+    "flags": ["new-checkout-flow", "hero-banner", "api-rate-limit"],
+    "context": {
+      "targetingKey": "user_123",
+      "plan": "pro"
+    }
+  }'
+```
+
+## SDK integration
+
+Truss flags are evaluated by flagd using the OpenFeature standard. Use any official OpenFeature SDK:
+
+| Platform | Package | Install |
+|----------|---------|---------|
+| JS (Web) | `@openfeature/web-sdk` + `@openfeature/flagd-web-provider` | `npm i @openfeature/web-sdk @openfeature/flagd-web-provider` |
+| Node.js | `@openfeature/server-sdk` + `@openfeature/flagd-provider` | `npm i @openfeature/server-sdk @openfeature/flagd-provider` |
+| React | `@openfeature/react-sdk` + `@openfeature/flagd-web-provider` | `npm i @openfeature/react-sdk @openfeature/flagd-web-provider` |
+| Go | `github.com/open-feature/go-sdk` + `go-sdk-contrib/providers/flagd` | `go get github.com/open-feature/go-sdk github.com/open-feature/go-sdk-contrib/providers/flagd` |
+| Python | `openfeature-sdk` + `openfeature-provider-flagd` | `pip install openfeature-sdk openfeature-provider-flagd` |
+| Java | `dev.openfeature:sdk` + `dev.openfeature.contrib.providers:flagd` | See [Maven Central](https://central.sonatype.com/artifact/dev.openfeature.contrib.providers/flagd) |
+
+## API reference
+
+All endpoints are prefixed with `/api/flags`. Authentication is required (session cookie or API key).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/flags` | List all flags |
+| `POST` | `/api/flags` | Create a new flag |
+| `GET` | `/api/flags/:key` | Get flag by key |
+| `PUT` | `/api/flags/:key` | Update a flag |
+| `DELETE` | `/api/flags/:key` | Delete a flag |
+| `PATCH` | `/api/flags/:key/state` | Toggle flag state (ENABLED / DISABLED) |
+| `POST` | `/api/flags/:key/promote` | Promote flag config between environments |
+| `POST` | `/api/flags/evaluate` | Evaluate a single flag |
+| `POST` | `/api/flags/evaluate/bulk` | Evaluate multiple flags |
+| `GET` | `/api/flags/segments` | List all segments |
+| `POST` | `/api/flags/segments` | Create a segment |
+| `PUT` | `/api/flags/segments/:key` | Update a segment |
+| `DELETE` | `/api/flags/segments/:key` | Delete a segment |

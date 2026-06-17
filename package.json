@@ -1,0 +1,31 @@
+{
+  "name": "truss",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n api,dash,docs -c blue,green,cyan npm:dev:api npm:dev:dashboard npm:dev:docs",
+    "dev:dashboard": "npm run dev -w @truss/dashboard",
+    "dev:api": "npm run dev -w @truss/api",
+    "dev:docs": "npm run dev -w @truss/docs",
+    "build": "npm run build -w @truss/dashboard",
+    "build:dashboard": "npm run build -w @truss/dashboard",
+    "build:api": "echo 'No build step for API (plain JS)'",
+    "build:docs": "npm run build -w @truss/docs",
+    "start:api": "npm run start -w @truss/api",
+    "migrate:create": "npm run migrate:create -w @truss/api --",
+    "migrate:up": "npm run migrate:up -w @truss/api",
+    "migrate:down": "npm run migrate:down -w @truss/api",
+    "migrate:redo": "npm run migrate:redo -w @truss/api",
+    "seed:stress": "node scripts/seed-stress.mjs",
+    "test": "npm run test -w @truss/api",
+    "test:api": "npm run test -w @truss/api",
+    "check": "npm run build && npm run test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

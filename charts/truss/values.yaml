@@ -1,0 +1,64 @@
+# Truss umbrella chart — single-tenant self-host.
+# Override secrets before any real deployment (see README "Hardening").
+
+# Public URL the dashboard is served at (used for Kratos CORS/return URLs).
+publicUrl: "http://localhost:3000"
+
+images:
+  # Truss app images. `tag` is optional and defaults to the chart appVersion,
+  # so a release bumps both in lockstep. Override per-component, e.g.:
+  #   --set images.api.tag=0.2.0  --set images.dashboard.repository=my.registry/truss-dashboard
+  api:
+    repository: ghcr.io/binarysquadd/truss-api
+    tag: ""        # defaults to .Chart.AppVersion when empty
+  dashboard:
+    repository: ghcr.io/binarysquadd/truss-dashboard
+    tag: ""        # defaults to .Chart.AppVersion when empty
+  postgres: postgres:16-alpine
+  kratos: oryd/kratos:v1.2.0
+  keto: oryd/keto:v0.12.0-alpha.0
+  hydra: oryd/hydra:v2.2.0
+  oathkeeper: oryd/oathkeeper:v0.40.7
+  minio: minio/minio:RELEASE.2024-09-22T00-33-43Z   # pin to a real digest/tag before release
+  flagd: ghcr.io/open-feature/flagd:v0.11.1
+  pullPolicy: IfNotPresent
+
+# ─────────────────────────────────────────────────────────────────────────────
+# !! INSECURE DEFAULTS — DO NOT SHIP AS-IS !!
+# Every value below is a placeholder and MUST be overridden at install time, e.g.:
+#   helm install truss ./charts/truss \
+#     --set secrets.dbPassword=$(openssl rand -hex 16) \
+#     --set secrets.encryptionKey=$(openssl rand -hex 32) \
+#     --set secrets.minioSecretKey=$(openssl rand -hex 24) \
+#     --set secrets.kratosCookieSecret=$(openssl rand -hex 16) \
+#     --set secrets.kratosCipherSecret=$(openssl rand -hex 16)
+# Only `encryptionKey` has a runtime guard; the others will silently deploy with
+# these well-known values if not overridden. See README "Hardening".
+# ─────────────────────────────────────────────────────────────────────────────
+secrets:
+  dbPassword: "truss"
+  encryptionKey: "change-me-encryption-key-32chars-minimum-000000"   # openssl rand -hex 32
+  minioAccessKey: "truss-minio"
+  minioSecretKey: "change-me-minio-secret-key"
+  kratosCookieSecret: "change-me-cookie-secret-32chars!"
+  kratosCipherSecret: "change-me-cipher-secret-32chars!"
+  hydraSystemSecret: "change-me-hydra-system-secret-32chars-min"   # openssl rand -hex 16
+
+postgres:
+  storage: 5Gi
+minio:
+  storage: 10Gi
+  bucket: truss
+
+# Set to your dashboard origin(s) in production; the API CORS fails closed otherwise.
+corsAllowedOrigins: "http://localhost:3000"
+
+# Comma-separated Kratos identity IDs granted admin powers (DB roles, migrations,
+# backups, authorization rules). Register your account, copy your ID from the
+# dashboard's Authentication panel, set it here, and `helm upgrade`. Empty = no
+# admins (everyone gets read/write, nobody gets the admin-gated surfaces).
+adminIdentityIds: ""
+
+resources:
+  small: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 500m, memory: 256Mi } }
+  medium: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: "1", memory: 1Gi } }

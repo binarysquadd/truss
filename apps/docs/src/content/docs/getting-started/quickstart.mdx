@@ -1,0 +1,91 @@
+---
+title: Quickstart
+description: Get Truss running locally in 5 minutes.
+---
+
+Truss is open source and self-hosted. Clone it, point it at a Postgres database, and you have the full platform running locally with no signup, no limits, and no external services required.
+
+## Prerequisites
+
+- Node.js 20+
+- PostgreSQL 15+ (local or remote)
+- (Optional) MinIO for storage, Ory Kratos for auth, Ory Keto for authorization
+
+## 1. Clone and install
+
+```bash
+git clone https://github.com/binarysquad/truss
+cd truss
+npm install
+```
+
+## 2. Configure environment
+
+Copy the example env file for the API:
+
+```bash
+cp apps/api/.env.example apps/api/.env
+```
+
+Edit `apps/api/.env` and set your database connection:
+
+```env
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
+```
+
+That's the only required variable. Auth, storage, and authorization are optional — Truss works with just a Postgres connection.
+
+## 3. Run migrations
+
+```bash
+npm run migrate:up
+```
+
+This creates the internal schema used by Truss to manage API keys, saved queries, webhooks, realtime subscriptions, and more.
+
+## 4. Start development servers
+
+```bash
+npm run dev
+```
+
+This starts:
+- **Dashboard** at `http://localhost:5173` (Vite dev server)
+- **API** at `http://localhost:8787` (Express with hot reload)
+
+The dashboard proxies `/api` requests to the backend automatically during development.
+
+## 5. Create an API key
+
+Open the dashboard and navigate to **Settings > API Keys**, or use the API directly:
+
+```bash
+curl -X POST http://localhost:8787/api/keys \
+  -H "Content-Type: application/json" \
+  -d '{"keyType": "service_role", "label": "dev-key"}'
+```
+
+The response includes a `secret` field — save it. This is the only time the full key is shown.
+
+## 6. Make your first API call
+
+```bash
+# Check platform status
+curl http://localhost:8787/v1/status \
+  -H "apikey: truss_sk_your_key_here"
+```
+
+```javascript
+// JavaScript
+const res = await fetch('http://localhost:8787/v1/status', {
+  headers: { apikey: 'truss_sk_your_key_here' }
+});
+const status = await res.json();
+console.log(status.database.table_count);
+```
+
+## What's next?
+
+- [Configuration](./configuration/) — All environment variables explained
+- [API Keys](../guides/api-keys/) — Understand anon vs service_role keys
+- [Database](../guides/database/) — SQL-over-HTTP and Auto-REST endpoints

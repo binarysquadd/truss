@@ -1,0 +1,218 @@
+---
+title: Foreign Data Wrappers
+description: Query external databases as local tables using PostgreSQL Foreign Data Wrappers.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Truss provides a dashboard UI and API for managing PostgreSQL Foreign Data Wrappers (FDW). FDW lets you query tables in external databases as if they were local tables — useful for federated queries, data migration, and cross-database analytics.
+
+## How FDW Works
+
+Foreign Data Wrappers are a PostgreSQL feature (SQL/MED standard) that enables access to external data sources through the regular SQL interface. The process involves three steps:
+
+1. **Create a foreign server** — define the connection to the external database
+2. **Create a user mapping** — map a local PostgreSQL role to credentials on the remote server
+3. **Import foreign schema** — import table definitions from the remote server into a local schema
+
+After setup, you can `SELECT` from foreign tables just like local tables, including joins between local and foreign tables.
+
+## Setup
+
+The `postgres_fdw` extension must be available. Most PostgreSQL installations include it. Enable it via the SQL workbench:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS postgres_fdw;
+```
+
+---
+
+## Create a Foreign Server
+
+<Tabs>
+  <TabItem label="API">
+```bash
+curl -X POST http://localhost:8787/api/fdw/server \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "analytics_db",
+    "fdw_name": "postgres_fdw",
+    "host": "analytics.example.com",
+    "port": "5432",
+    "dbname": "analytics"
+  }'
+```
+  </TabItem>
+  <TabItem label="SQL">
+```sql
+CREATE SERVER analytics_db
+  FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host 'analytics.example.com', port '5432', dbname 'analytics');
+```
+  </TabItem>
+</Tabs>
+
+| Parameter | Description |
+|-----------|-------------|
+| `name` | Local name for the foreign server |
+| `fdw_name` | The FDW extension to use (typically `postgres_fdw`) |
+| `host` | Hostname or IP of the remote database |
+| `port` | Port number (default: 5432) |
+| `dbname` | Database name on the remote server |
+
+## Create a User Mapping
+
+Map a local role to credentials on the remote server:
+
+<Tabs>
+  <TabItem label="API">
+```bash
+curl -X POST http://localhost:8787/api/fdw/user-mapping \
+  -H "Content-Type: application/json" \
+  -d '{
+    "server": "analytics_db",
+    "local_user": "current_user",
+    "remote_user": "readonly",
+    "remote_password": "secret"
+  }'
+```
+  </TabItem>
+  <TabItem label="SQL">
+```sql
+CREATE USER MAPPING FOR CURRENT_USER
+  SERVER analytics_db
+  OPTIONS (user 'readonly', password 'secret');
+```
+  </TabItem>
+</Tabs>
+
+| Parameter | Description |
+|-----------|-------------|
+| `server` | Name of the foreign server |
+| `local_user` | Local PostgreSQL role (`current_user` for the current session user) |
+| `remote_user` | Username on the remote server |
+| `remote_password` | Password for the remote user |
+
+## Import Foreign Schema
+
+Import all tables from a remote schema into a local schema:
+
+<Tabs>
+  <TabItem label="API">
+```bash
+curl -X POST http://localhost:8787/api/fdw/import \
+  -H "Content-Type: application/json" \
+  -d '{
+    "server": "analytics_db",
+    "remote_schema": "public",
+    "local_schema": "analytics"
+  }'
+```
+  </TabItem>
+  <TabItem label="SQL">
+```sql
+-- Create the local schema first
+CREATE SCHEMA IF NOT EXISTS analytics;
+
+-- Import all tables from the remote public schema
+IMPORT FOREIGN SCHEMA public
+  FROM SERVER analytics_db
+  INTO analytics;
+```
+  </TabItem>
+</Tabs>
+
+After importing, you can query the foreign tables:
+
+```sql
+-- Query foreign table
+SELECT * FROM analytics.page_views WHERE created_at > now() - interval '7 days';
+
+-- Join local and foreign tables
+SELECT u.name, count(pv.id) AS views
+FROM users u
+JOIN analytics.page_views pv ON pv.user_id = u.id
+WHERE pv.created_at > now() - interval '30 days'
+GROUP BY u.name
+ORDER BY views DESC;
+```
+
+## List Foreign Servers and Tables
+
+```bash
+curl http://localhost:8787/api/sql/fdw
+```
+
+Response:
+
+```json
+{
+  "wrappers": [
+    {
+      "server_name": "analytics_db",
+      "fdw_name": "postgres_fdw",
+      "handler": "postgres_fdw_handler",
+      "validator": "postgres_fdw_validator",
+      "server_options": ["host=analytics.example.com", "port=5432", "dbname=analytics"],
+      "user_mappings": ["postgres"]
+    }
+  ],
+  "foreignTables": [
+    {
+      "schema": "analytics",
+      "table_name": "page_views",
+      "server_name": "analytics_db",
+      "columns": ["id integer", "user_id integer", "url text", "created_at timestamp"]
+    }
+  ]
+}
+```
+
+## Remove FDW Resources
+
+Use the SQL workbench to drop foreign servers, user mappings, and foreign tables:
+
+```sql
+-- Drop all foreign tables in a schema
+DROP SCHEMA analytics CASCADE;
+
+-- Drop a user mapping
+DROP USER MAPPING FOR CURRENT_USER SERVER analytics_db;
+
+-- Drop a foreign server (CASCADE drops all dependent objects)
+DROP SERVER analytics_db CASCADE;
+```
+
+## Use Cases
+
+- **Cross-database analytics** — join your application data with an analytics or data warehouse database
+- **Data migration** — read from an old database and insert into the new one using `INSERT INTO ... SELECT FROM`
+- **Read replicas** — query a read replica for heavy analytical queries without loading your primary database
+- **Multi-service integration** — access shared reference data (e.g., a central user directory) from multiple services
+
+## Performance Considerations
+
+- **Network latency** — every query against a foreign table involves a network round-trip. Keep foreign queries efficient.
+- **Push-down optimization** — `postgres_fdw` pushes WHERE clauses, joins, and aggregates to the remote server when possible. Use `EXPLAIN` to verify.
+- **Caching** — foreign tables are not cached locally. For frequently accessed data, consider materialized views: `CREATE MATERIALIZED VIEW local_cache AS SELECT * FROM analytics.page_views`.
+- **Connection pooling** — each FDW connection is a separate TCP connection to the remote server. Monitor connection counts on the remote side.
+
+## Dashboard
+
+Navigate to **Database > FDW** in the dashboard to:
+
+- View all configured foreign servers and their connection options
+- See all foreign tables with their schemas and column definitions
+- Create servers, user mappings, and import schemas via forms
+- Drop servers and mappings
+
+---
+
+## API Reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/sql/fdw` | List foreign servers and foreign tables |
+| `POST` | `/api/fdw/server` | Create a foreign server |
+| `POST` | `/api/fdw/user-mapping` | Create a user mapping |
+| `POST` | `/api/fdw/import` | Import foreign schema |

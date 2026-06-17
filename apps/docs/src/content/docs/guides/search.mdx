@@ -1,0 +1,205 @@
+---
+title: Full-Text Search
+description: PostgreSQL full-text search with weighted columns and GIN indexes.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Truss provides a full-text search module built on PostgreSQL's native `tsvector` and `tsquery` capabilities. Set up search on any table with weighted columns, auto-updating triggers, and GIN indexes — all from the dashboard or API.
+
+## How it works
+
+PostgreSQL full-text search converts text into `tsvector` tokens and matches them against `tsquery` queries. Truss automates the setup:
+
+1. Adds a `search_vector` column (type `tsvector`) to your table
+2. Creates a trigger that auto-updates the vector on INSERT/UPDATE
+3. Creates a GIN index for fast lookups
+4. Supports weighted columns (A, B, C, D) for relevance ranking
+
+## Setup wizard
+
+The easiest way to enable search is via the dashboard. Navigate to **Search** and use the setup wizard:
+
+1. Pick a table
+2. Select columns to index (and assign weights)
+3. Choose a text search configuration (e.g., `english`, `simple`)
+4. Click "Create" — Truss generates the tsvector column, trigger, and GIN index
+
+### Via API
+
+```bash
+curl -X POST http://localhost:8787/api/search/setup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schema": "public",
+    "table": "articles",
+    "columns": [
+      {"name": "title", "weight": "A"},
+      {"name": "body", "weight": "B"},
+      {"name": "tags", "weight": "C"}
+    ],
+    "config": "english"
+  }'
+```
+
+This generates SQL like:
+
+```sql
+ALTER TABLE articles ADD COLUMN search_vector tsvector;
+
+CREATE FUNCTION articles_search_update() RETURNS trigger AS $$
+BEGIN
+  NEW.search_vector :=
+    setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
+    setweight(to_tsvector('english', coalesce(NEW.body, '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(NEW.tags, '')), 'C');
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER articles_search_trigger
+  BEFORE INSERT OR UPDATE ON articles
+  FOR EACH ROW EXECUTE FUNCTION articles_search_update();
+
+CREATE INDEX articles_search_idx ON articles USING GIN (search_vector);
+```
+
+## Searching
+
+### Test a query via the dashboard
+
+Navigate to **Search > Playground**, select a table, type a query, and see results with highlighted matches (`ts_headline`).
+
+### Via API
+
+```bash
+curl -X POST http://localhost:8787/api/search/test \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schema": "public",
+    "table": "articles",
+    "query": "postgres & full-text",
+    "limit": 20
+  }'
+```
+
+### Via SQL-over-HTTP
+
+For full control, use the SQL endpoint:
+
+```bash
+curl -X POST http://localhost:8787/v1/sql \
+  -H "apikey: truss_sk_your_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sql": "SELECT id, title, ts_headline(body, q) AS snippet, ts_rank(search_vector, q) AS rank FROM articles, to_tsquery($1) q WHERE search_vector @@ q ORDER BY rank DESC LIMIT 10",
+    "params": ["english", "database & search"]
+  }'
+```
+
+## Inspecting search configuration
+
+```bash
+# List text search configurations
+curl http://localhost:8787/api/search/configs
+
+# List tables with search indexes
+curl http://localhost:8787/api/search/indexes
+
+# List text columns eligible for search
+curl http://localhost:8787/api/search/columns
+
+# List tables eligible for search setup
+curl http://localhost:8787/api/search/eligible
+```
+
+## Query syntax
+
+PostgreSQL tsquery supports:
+
+| Syntax | Meaning | Example |
+|--------|---------|---------|
+| `&` | AND | `cat & dog` |
+| `\|` | OR | `cat \| dog` |
+| `!` | NOT | `cat & !dog` |
+| `<->` | Followed by | `full <-> text` |
+| `:*` | Prefix match | `post:*` |
+
+## Weights
+
+Columns can be assigned weights A through D (A is highest priority):
+
+- **A** (weight 1.0) — titles, names
+- **B** (weight 0.4) — body text, descriptions
+- **C** (weight 0.2) — tags, categories
+- **D** (weight 0.1) — metadata, comments
+
+Results are ranked by `ts_rank`, which considers these weights.
+
+## SDK / Code Examples
+
+<Tabs>
+  <TabItem label="JavaScript">
+```javascript
+import pg from "pg";
+
+const pool = new pg.Pool({ connectionString: DATABASE_URL });
+
+// Weighted tsvector search with ts_headline
+const { rows } = await pool.query(`
+  SELECT
+    id,
+    title,
+    ts_rank(search_vector, query) AS rank,
+    ts_headline('english', body, query,
+      'StartSel=<b>, StopSel=</b>, MaxWords=35, MinWords=15'
+    ) AS headline
+  FROM articles, plainto_tsquery('english', $1) query
+  WHERE search_vector @@ query
+  ORDER BY rank DESC
+  LIMIT 20
+`, ["search terms here"]);
+
+console.log(rows);
+```
+  </TabItem>
+  <TabItem label="Python">
+```python
+import psycopg2
+
+conn = psycopg2.connect(DATABASE_URL)
+cur = conn.cursor()
+
+# Weighted tsvector search with ts_headline
+cur.execute("""
+    SELECT
+        id,
+        title,
+        ts_rank(search_vector, query) AS rank,
+        ts_headline('english', body, query,
+            'StartSel=<b>, StopSel=</b>, MaxWords=35, MinWords=15'
+        ) AS headline
+    FROM articles, plainto_tsquery('english', %s) query
+    WHERE search_vector @@ query
+    ORDER BY rank DESC
+    LIMIT 20
+""", ("search terms here",))
+
+results = cur.fetchall()
+for row in results:
+    print(f"{row[1]} (rank={row[2]:.4f}): {row[3]}")
+```
+  </TabItem>
+  <TabItem label="cURL">
+```bash
+# Full-text search via Truss SQL API
+curl -X POST \
+  ${TRUSS_API_URL}/v1/sql \
+  -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "SELECT id, title, ts_rank(search_vector, query) AS rank FROM articles, plainto_tsquery('\''english'\'', $1) query WHERE search_vector @@ query ORDER BY rank DESC LIMIT 20",
+    "params": ["search terms here"]
+  }'
+```
+  </TabItem>
+</Tabs>

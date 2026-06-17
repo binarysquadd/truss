@@ -1,0 +1,395 @@
+---
+title: Webhooks
+description: HTTP callbacks on database changes with HMAC signing and delivery logs.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Truss webhooks send HTTP POST requests to your URLs when database rows change. They use the same LISTEN/NOTIFY infrastructure as realtime subscriptions, with added features like HMAC signing, retry tracking, and delivery logs.
+
+## Creating a webhook
+
+### Via dashboard
+
+Navigate to **Webhooks** in the sidebar. Click "Create Webhook" and configure:
+- **Name** — a label for the webhook
+- **Table** — which table to watch
+- **Events** — INSERT, UPDATE, DELETE (pick one or more)
+- **URL** — the endpoint to call
+- **Headers** — optional custom headers (e.g., Authorization)
+- **Secret** — for HMAC signature verification
+
+### Via API
+
+```bash
+curl -X POST http://localhost:8787/api/webhooks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "New order notification",
+    "table_schema": "public",
+    "table_name": "orders",
+    "events": ["INSERT"],
+    "url": "https://your-app.com/webhooks/new-order",
+    "headers": {"Authorization": "Bearer your-secret"},
+    "secret": "whsec_your_signing_secret",
+    "active": true
+  }'
+```
+
+## Webhook payload
+
+When an event fires, Truss sends a POST request with this JSON body:
+
+```json
+{
+  "event": "INSERT",
+  "schema": "public",
+  "table": "orders",
+  "row": {
+    "id": 42,
+    "user_id": 1,
+    "total": 99.99,
+    "created_at": "2025-01-15T10:00:00Z"
+  },
+  "old_row": null,
+  "timestamp": "2025-01-15T10:00:00.123Z"
+}
+```
+
+For UPDATE events, both `row` (new data) and `old_row` (previous data) are included.
+
+## HMAC-SHA256 Signature Verification
+
+If you set a `secret` on the webhook, Truss signs each payload with HMAC-SHA256. The signature is sent in the `X-Truss-Signature` header as a hex-encoded string.
+
+### How signing works
+
+1. Truss serializes the JSON payload to a string
+2. Computes `HMAC-SHA256(payload_string, your_secret)`
+3. Hex-encodes the result
+4. Sends it in the `X-Truss-Signature` header
+
+### Verification examples
+
+<Tabs>
+  <TabItem label="JavaScript">
+```javascript
+import crypto from 'crypto';
+import express from 'express';
+
+function verifySignature(payload, signature, secret) {
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(payload)
+    .digest('hex');
+  return crypto.timingSafeEqual(
+    Buffer.from(signature),
+    Buffer.from(expected)
+  );
+}
+
+// Express middleware
+app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+  const sig = req.headers['x-truss-signature'];
+  if (!sig || !verifySignature(req.body, sig, process.env.WEBHOOK_SECRET)) {
+    return res.status(401).send('Invalid signature');
+  }
+  const event = JSON.parse(req.body);
+  console.log('Verified event:', event);
+  res.sendStatus(200);
+});
+```
+  </TabItem>
+  <TabItem label="Python">
+```python
+import hmac
+import hashlib
+from flask import Flask, request, abort
+
+app = Flask(__name__)
+WEBHOOK_SECRET = "whsec_your_signing_secret"
+
+def verify_signature(payload: bytes, signature: str, secret: str) -> bool:
+    expected = hmac.new(
+        secret.encode(),
+        payload,
+        hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(signature, expected)
+
+@app.post("/webhook")
+def handle_webhook():
+    sig = request.headers.get("X-Truss-Signature", "")
+    if not verify_signature(request.data, sig, WEBHOOK_SECRET):
+        abort(401, "Invalid signature")
+    event = request.get_json()
+    print("Verified event:", event)
+    return "", 200
+```
+  </TabItem>
+  <TabItem label="Go">
+```go
+package main
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
+	"net/http"
+)
+
+var webhookSecret = "whsec_your_signing_secret"
+
+func verifySignature(payload []byte, signature, secret string) bool {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(signature), []byte(expected))
+}
+
+func webhookHandler(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+	sig := r.Header.Get("X-Truss-Signature")
+	if !verifySignature(body, sig, webhookSecret) {
+		http.Error(w, "Invalid signature", http.StatusUnauthorized)
+		return
+	}
+	// Process the verified event...
+	w.WriteHeader(http.StatusOK)
+}
+
+func main() {
+	http.HandleFunc("/webhook", webhookHandler)
+	http.ListenAndServe(":3000", nil)
+}
+```
+  </TabItem>
+</Tabs>
+
+Always use constant-time comparison (`timingSafeEqual` in Node.js, `hmac.compare_digest` in Python, `hmac.Equal` in Go) to prevent timing attacks.
+
+## Managing webhooks
+
+```bash
+# List all webhooks
+curl http://localhost:8787/api/webhooks
+
+# Update a webhook
+curl -X PATCH http://localhost:8787/api/webhooks/{id} \
+  -H "Content-Type: application/json" \
+  -d '{"active": false}'
+
+# Delete a webhook
+curl -X DELETE http://localhost:8787/api/webhooks/{id}
+```
+
+## Enable / Disable Per Webhook
+
+Each webhook has an `active` boolean. Disabled webhooks remain configured but do not fire when events occur. This is useful for temporarily pausing a webhook while debugging your endpoint.
+
+```bash
+# Disable a webhook
+curl -X PATCH http://localhost:8787/api/webhooks/{id} \
+  -H "Content-Type: application/json" \
+  -d '{"active": false}'
+
+# Re-enable
+curl -X PATCH http://localhost:8787/api/webhooks/{id} \
+  -H "Content-Type: application/json" \
+  -d '{"active": true}'
+```
+
+From the dashboard, toggle the switch next to any webhook to enable or disable it instantly.
+
+## Testing Webhooks
+
+### Send a test event
+
+```bash
+curl -X POST http://localhost:8787/api/webhooks/{id}/test
+```
+
+Sends a synthetic test payload to the webhook URL and returns the HTTP response status, response body, and latency. The test payload uses `event: "TEST"` so your handler can distinguish test events from real ones.
+
+Test events appear in the delivery logs alongside real deliveries.
+
+### Local development
+
+When developing locally, your webhook endpoint might not be publicly accessible. Options:
+- Use a tunneling service (ngrok, Cloudflare Tunnel) to expose your local server
+- Point the webhook URL to `http://host.docker.internal:3000/webhook` if running in Docker
+- Use the test endpoint to verify payload format, then test your handler with cURL locally
+
+## Delivery Logs and Replay
+
+Every webhook delivery (including failures and test events) is logged for inspection.
+
+### View delivery logs
+
+```bash
+curl http://localhost:8787/api/webhooks/{id}/logs
+```
+
+Each log entry includes:
+- `event_type` — INSERT, UPDATE, DELETE, or TEST
+- `payload` — the full JSON that was sent
+- `status_code` — HTTP response status (or null if the request timed out)
+- `response_body` — the first 1 KB of the response from your server
+- `latency_ms` — round-trip time in milliseconds
+- `created_at` — when the delivery was attempted
+
+### Replay a delivery
+
+```bash
+curl -X POST http://localhost:8787/api/webhooks/{id}/replay/{logId}
+```
+
+Re-sends the exact same payload from a previous delivery. This is useful when:
+- Your endpoint was down and you need to reprocess missed events
+- You fixed a bug in your handler and want to reprocess a failed delivery
+- You want to test idempotency of your handler
+
+The replayed delivery creates a new log entry so you can compare the original and replayed results.
+
+### Dashboard
+
+The **Webhooks** panel shows delivery logs per webhook with color-coded status badges:
+- Green (2xx) — successful delivery
+- Yellow (3xx/4xx) — client error or redirect
+- Red (5xx / timeout) — server error or unreachable
+
+## Failure Tracking
+
+Truss tracks consecutive failures per webhook via `fail_count`. The dashboard shows which webhooks are healthy and which are failing. You can pause failing webhooks and resume them after fixing the endpoint.
+
+## Client API
+
+Webhooks are available via the management API:
+
+```bash
+curl http://localhost:8787/v1/webhooks \
+  -H "apikey: truss_sk_your_key"
+
+curl http://localhost:8787/v1/webhooks/{id} \
+  -H "apikey: truss_sk_your_key"
+```
+
+## SDK / Code Examples
+
+<Tabs>
+  <TabItem label="cURL">
+```bash
+# Create a webhook via Truss API
+curl -X POST \
+  ${TRUSS_API_URL}/api/webhooks \
+  -H "Content-Type: application/json" \
+  -b "ory_kratos_session=${SESSION_TOKEN}" \
+  -d '{
+    "name": "Order notifications",
+    "table_schema": "public",
+    "table_name": "orders",
+    "url": "https://example.com/webhook",
+    "events": ["INSERT", "UPDATE", "DELETE"],
+    "secret": "whsec_your_signing_secret"
+  }'
+
+# Test a webhook
+curl -X POST \
+  ${TRUSS_API_URL}/api/webhooks/WEBHOOK_ID/test \
+  -b "ory_kratos_session=${SESSION_TOKEN}"
+```
+  </TabItem>
+  <TabItem label="JavaScript (Verify)">
+```javascript
+import crypto from "crypto";
+
+// Verify HMAC-SHA256 signature from Truss webhook delivery
+function verifyWebhookSignature(payload, signature, secret) {
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(payload)
+    .digest("hex");
+  return crypto.timingSafeEqual(
+    Buffer.from(signature),
+    Buffer.from(expected)
+  );
+}
+
+// Express middleware example
+app.post("/webhook", express.raw({ type: "application/json" }), (req, res) => {
+  const sig = req.headers["x-truss-signature"];
+  if (!verifyWebhookSignature(req.body, sig, WEBHOOK_SECRET)) {
+    return res.status(401).send("Invalid signature");
+  }
+  const event = JSON.parse(req.body);
+  console.log("Webhook event:", event);
+  res.sendStatus(200);
+});
+```
+  </TabItem>
+  <TabItem label="Python (Verify)">
+```python
+import hmac
+import hashlib
+
+def verify_webhook_signature(payload: bytes, signature: str, secret: str) -> bool:
+    """Verify HMAC-SHA256 signature from Truss webhook delivery."""
+    expected = hmac.new(
+        secret.encode(),
+        payload,
+        hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(signature, expected)
+
+# Flask example
+from flask import Flask, request, abort
+
+app = Flask(__name__)
+
+@app.post("/webhook")
+def handle_webhook():
+    sig = request.headers.get("X-Truss-Signature", "")
+    if not verify_webhook_signature(request.data, sig, WEBHOOK_SECRET):
+        abort(401, "Invalid signature")
+    event = request.get_json()
+    print("Webhook event:", event)
+    return "", 200
+```
+  </TabItem>
+  <TabItem label="Go (Verify)">
+```go
+package main
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
+	"net/http"
+)
+
+func verifySignature(payload []byte, signature, secret string) bool {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(signature), []byte(expected))
+}
+
+func webhookHandler(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	sig := r.Header.Get("X-Truss-Signature")
+	if !verifySignature(body, sig, webhookSecret) {
+		http.Error(w, "Invalid signature", http.StatusUnauthorized)
+		return
+	}
+	// Process event...
+	w.WriteHeader(http.StatusOK)
+}
+```
+  </TabItem>
+</Tabs>

@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: truss-keto-config
+data:
+  keto.yml: |
+    serve:
+      read: { host: 0.0.0.0, port: 4466 }
+      write: { host: 0.0.0.0, port: 4467 }
+    namespaces:
+      - { id: 0, name: default }
+    log: { level: info, format: json }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: truss-keto
+spec:
+  selector: { app: truss-keto }
+  ports:
+    - { name: read, port: 4466, targetPort: 4466 }
+    - { name: write, port: 4467, targetPort: 4467 }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: truss-keto-migrate
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: {{ .Values.images.keto }}
+          command: ["/bin/sh", "-ec"]
+          env:
+            - name: DSN
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: keto-database-url } }
+          args:
+            - |
+              until nc -z truss-postgres 5432; do echo "wait pg"; sleep 2; done
+              keto migrate up -c /etc/keto/keto.yml --yes
+          volumeMounts: [{ name: config, mountPath: /etc/keto }]
+      volumes:
+        - name: config
+          configMap: { name: truss-keto-config }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: truss-keto
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: truss-keto }
+  template:
+    metadata:
+      labels: { app: truss-keto }
+    spec:
+      initContainers:
+        - name: wait-migrate
+          image: {{ .Values.images.keto }}
+          command: ["/bin/sh","-ec","until keto migrate up -c /etc/keto/keto.yml --yes >/dev/null 2>&1; do echo 'wait keto migrate'; sleep 3; done"]
+          env:
+            - name: DSN
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: keto-database-url } }
+          volumeMounts: [{ name: config, mountPath: /etc/keto }]
+      containers:
+        - name: keto
+          image: {{ .Values.images.keto }}
+          args: ["serve", "all", "--config", "/etc/keto/keto.yml"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            # the keto image declares a NAMED user (ory = uid 100), which kube can't
+            # verify as non-root — so pin the numeric uid/gid explicitly.
+            runAsUser: 100
+            runAsGroup: 101
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: DSN
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: keto-database-url } }
+          ports: [{ containerPort: 4466 }, { containerPort: 4467 }]
+          readinessProbe: { httpGet: { path: /health/ready, port: 4466 }, initialDelaySeconds: 5, periodSeconds: 10 }
+          volumeMounts: [{ name: config, mountPath: /etc/keto }]
+          resources: {{- toYaml .Values.resources.small | nindent 12 }}
+      volumes:
+        - name: config
+          configMap: { name: truss-keto-config }

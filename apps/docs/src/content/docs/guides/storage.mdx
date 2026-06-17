@@ -1,0 +1,246 @@
+---
+title: Storage
+description: S3-compatible file storage with presigned uploads and downloads.
+---
+
+Truss provides S3-compatible file storage powered by MinIO. The dashboard gives you a file browser with drag-and-drop uploads. The API provides presigned URLs for direct client uploads and downloads.
+
+## Setup
+
+Set these environment variables in `apps/api/.env`:
+
+```env
+MINIO_S3_ENDPOINT=http://localhost:9000
+MINIO_CONSOLE_URL=http://localhost:9001
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_REGION=us-east-1
+MINIO_FORCE_PATH_STYLE=true
+```
+
+## Buckets
+
+### List buckets
+
+```bash
+curl http://localhost:8787/api/storage/buckets
+```
+
+### Create a bucket
+
+```bash
+curl -X POST http://localhost:8787/api/storage/buckets \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-bucket"}'
+```
+
+Bucket names must be lowercase, 3-63 characters, using letters, numbers, dots, and hyphens.
+
+### Delete a bucket
+
+```bash
+# Delete empty bucket
+curl -X DELETE http://localhost:8787/api/storage/buckets/my-bucket
+
+# Force delete (empties bucket first)
+curl -X DELETE "http://localhost:8787/api/storage/buckets/my-bucket?force=true"
+```
+
+## Objects
+
+### List objects
+
+```bash
+curl "http://localhost:8787/api/storage/buckets/my-bucket/objects?prefix=images/&max_keys=50"
+```
+
+### Upload via presigned URL
+
+The recommended upload flow: get a presigned URL from the API, then upload directly to S3.
+
+```bash
+# 1. Get presigned upload URL
+curl -X POST http://localhost:8787/api/storage/buckets/my-bucket/objects/presign-upload \
+  -H "Content-Type: application/json" \
+  -d '{"key": "images/photo.jpg", "contentType": "image/jpeg"}'
+
+# 2. Upload directly to the returned URL
+curl -X PUT "$PRESIGNED_URL" \
+  -H "Content-Type: image/jpeg" \
+  --data-binary @photo.jpg
+```
+
+```javascript
+// JavaScript: presigned upload
+const { url, headers } = await fetch('/api/storage/buckets/my-bucket/objects/presign-upload', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ key: 'images/photo.jpg', contentType: 'image/jpeg' })
+}).then(r => r.json());
+
+await fetch(url, {
+  method: 'PUT',
+  headers,
+  body: file // File object from input
+});
+```
+
+### Download via presigned URL
+
+```bash
+curl -X POST http://localhost:8787/api/storage/buckets/my-bucket/objects/presign-download \
+  -H "Content-Type: application/json" \
+  -d '{"key": "images/photo.jpg", "expiresIn": 3600}'
+```
+
+Returns a presigned GET URL valid for the specified duration (default 900 seconds, max 7 days).
+
+### Upload text content directly
+
+For small text files, you can upload content directly through the API:
+
+```bash
+curl -X POST http://localhost:8787/api/storage/buckets/my-bucket/objects/upload-text \
+  -H "Content-Type: application/json" \
+  -d '{"key": "config.json", "content": "{\"version\": 1}", "contentType": "application/json"}'
+```
+
+### Delete objects
+
+```bash
+# Single object
+curl -X DELETE http://localhost:8787/api/storage/buckets/my-bucket/objects \
+  -H "Content-Type: application/json" \
+  -d '{"key": "images/photo.jpg"}'
+
+# Bulk delete (up to 1000 keys)
+curl -X POST http://localhost:8787/api/storage/buckets/my-bucket/objects/bulk-delete \
+  -H "Content-Type: application/json" \
+  -d '{"keys": ["file1.txt", "file2.txt", "file3.txt"]}'
+```
+
+## Multipart uploads
+
+For large files (>100MB), use multipart uploads:
+
+```bash
+# 1. Initialize
+curl -X POST http://localhost:8787/api/storage/buckets/my-bucket/objects/multipart/init \
+  -H "Content-Type: application/json" \
+  -d '{"key": "large-file.zip", "contentType": "application/zip"}'
+
+# 2. Get presigned URL for each part
+curl -X POST http://localhost:8787/api/storage/buckets/my-bucket/objects/multipart/presign-part \
+  -H "Content-Type: application/json" \
+  -d '{"key": "large-file.zip", "uploadId": "...", "partNumber": 1}'
+
+# 3. Upload each part to its presigned URL
+
+# 4. Complete the upload
+curl -X POST http://localhost:8787/api/storage/buckets/my-bucket/objects/multipart/complete \
+  -H "Content-Type: application/json" \
+  -d '{"key": "large-file.zip", "uploadId": "...", "parts": [{"partNumber": 1, "etag": "..."}]}'
+```
+
+## Bucket policies
+
+Set access policies on buckets (e.g., public read):
+
+```bash
+# Get current policy
+curl http://localhost:8787/api/storage/buckets/my-bucket/policy
+
+# Set policy
+curl -X PUT http://localhost:8787/api/storage/buckets/my-bucket/policy \
+  -H "Content-Type: application/json" \
+  -d '{"policy": {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": "*", "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::my-bucket/*"]}]}}'
+```
+
+## Object Metadata Editor
+
+Every object in S3 has user-defined metadata (key-value pairs) and system metadata (content type, size, last modified, etc.). The dashboard provides a metadata editor for viewing and updating these values.
+
+From the file browser, click on any object to open its detail panel:
+- View system metadata (size, content type, ETag, last modified)
+- Add, edit, or remove custom metadata headers (`x-amz-meta-*`)
+- Update content type and content disposition
+
+Via API:
+
+```bash
+# Get object metadata (HEAD request)
+curl -I "http://localhost:8787/api/storage/buckets/my-bucket/objects/metadata?key=images/photo.jpg"
+
+# Update metadata
+curl -X PATCH http://localhost:8787/api/storage/buckets/my-bucket/objects/metadata \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "images/photo.jpg",
+    "metadata": {"x-amz-meta-author": "alice", "x-amz-meta-version": "2"}
+  }'
+```
+
+## Bucket CORS Management
+
+Configure Cross-Origin Resource Sharing (CORS) rules per bucket to allow browser-based uploads and downloads from specific origins.
+
+```bash
+# Get CORS configuration
+curl http://localhost:8787/api/storage/buckets/my-bucket/cors
+
+# Set CORS rules
+curl -X PUT http://localhost:8787/api/storage/buckets/my-bucket/cors \
+  -H "Content-Type: application/json" \
+  -d '{
+    "corsRules": [
+      {
+        "AllowedOrigins": ["https://your-app.com"],
+        "AllowedMethods": ["GET", "PUT", "POST"],
+        "AllowedHeaders": ["*"],
+        "MaxAgeSeconds": 3600
+      }
+    ]
+  }'
+```
+
+Common CORS configurations:
+- **Public read** — allow GET from any origin (`*`)
+- **Authenticated uploads** — allow PUT/POST from your app's domain only
+- **Development** — allow all origins and methods (restrict before production)
+
+## Presigned URLs
+
+Presigned URLs let clients upload or download files directly to/from S3 without routing traffic through your API server.
+
+### Upload URL
+
+```bash
+curl -X POST http://localhost:8787/api/storage/buckets/my-bucket/objects/presign-upload \
+  -H "Content-Type: application/json" \
+  -d '{"key": "uploads/report.pdf", "contentType": "application/pdf", "expiresIn": 600}'
+```
+
+The returned URL is valid for `expiresIn` seconds (default 900, max 604800). The client uploads directly to the S3 endpoint.
+
+### Download URL
+
+```bash
+curl -X POST http://localhost:8787/api/storage/buckets/my-bucket/objects/presign-download \
+  -H "Content-Type: application/json" \
+  -d '{"key": "uploads/report.pdf", "expiresIn": 3600}'
+```
+
+Returns a GET URL that grants temporary read access to the object. Use these for private files that should only be accessible via your application.
+
+### Auto-detect multipart
+
+The dashboard automatically uses multipart upload for files larger than 10 MB. Files under that threshold use a single PUT request via presigned URL. This is handled transparently in the file browser's drag-and-drop upload flow.
+
+## Client API
+
+Storage buckets are also available via the management API:
+
+```bash
+curl http://localhost:8787/v1/storage/buckets \
+  -H "apikey: truss_sk_your_key"
+```

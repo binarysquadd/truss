@@ -1,0 +1,91 @@
+---
+title: Configuration
+description: Environment variables reference for the Truss API server.
+---
+
+All configuration is via environment variables in `apps/api/.env`. Copy from `.env.example` to get started.
+
+## Required
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL connection string | `postgres://postgres:postgres@localhost:5432/postgres` |
+
+That's it. Everything else is optional — Truss works with just a database.
+
+## API Server
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `API_PORT` | Port the Express server listens on | `8787` |
+| `QUERY_TIMEOUT_MS` | Max query execution time (ms) | `10000` |
+| `SQL_MAX_ROWS` | Max rows returned by the SQL workbench | `200` |
+
+## Authentication (Ory Kratos)
+
+Required for user authentication. Without these, the dashboard runs in dev mode (no login required).
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `KRATOS_PUBLIC_URL` | Kratos public API | `http://localhost:4433` |
+| `KRATOS_ADMIN_URL` | Kratos admin API | `http://localhost:4434` |
+| `KRATOS_ADMIN_TOKEN` | Bearer token for the Kratos admin proxy | (none) |
+| `KRATOS_IDENTITY_SCHEMA_ID` | Identity schema to use for new users | `default` |
+| `KRATOS_OIDC_PROVIDERS` | Comma-separated social login provider IDs | (none) |
+| `TRUSS_AUTH_REQUIRED` | Require authentication for dashboard | `false` |
+| `TRUSS_ADMIN_IDENTITY_IDS` | Comma-separated Kratos identity UUIDs for admin access | (none) |
+
+## Authorization (Ory Keto)
+
+Required for relation-based access control (ReBAC).
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `KETO_READ_URL` | Keto read API | `http://localhost:4466` |
+| `KETO_WRITE_URL` | Keto write API | `http://localhost:4467` |
+| `KETO_ADMIN_TOKEN` | Bearer token for the Keto admin proxy | (none) |
+
+## OAuth2 / OIDC (Ory Hydra)
+
+Required for OAuth2 client management and token issuance.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HYDRA_PUBLIC_URL` | Hydra public API (OAuth2 endpoints) | `http://localhost:4444` |
+| `HYDRA_ADMIN_URL` | Hydra admin API (client management) | `http://localhost:4445` |
+| `HYDRA_ADMIN_TOKEN` | Bearer token for the Hydra admin proxy | (none) |
+
+## API Gateway (Ory Oathkeeper)
+
+Required for the API gateway / reverse proxy features.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OATHKEEPER_PROXY_URL` | Oathkeeper proxy endpoint | `http://localhost:4455` |
+| `OATHKEEPER_ADMIN_URL` | Oathkeeper admin API | `http://localhost:4456` |
+| `OATHKEEPER_ADMIN_TOKEN` | Bearer token for the Oathkeeper admin proxy | (none) |
+
+## Storage (MinIO / S3)
+
+Required for file storage features.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MINIO_S3_ENDPOINT` | S3-compatible endpoint URL | `http://localhost:9000` |
+| `MINIO_CONSOLE_URL` | MinIO web console URL | `http://localhost:9001` |
+| `MINIO_ACCESS_KEY` | S3 access key | `minioadmin` |
+| `MINIO_SECRET_KEY` | S3 secret key | `minioadmin` |
+| `MINIO_REGION` | S3 region | `us-east-1` |
+| `MINIO_FORCE_PATH_STYLE` | Use path-style S3 URLs (required for MinIO) | `true` |
+
+## Cross-Origin
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CORS_ALLOWED_ORIGINS` | Comma-separated frontend origins | (none) |
+
+When deploying the dashboard and API on different domains, set this to allow cross-origin requests:
+
+```env
+CORS_ALLOWED_ORIGINS=https://app.yourdomain.com,https://truss.yourdomain.com
+```

@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: truss-flagd-config
+data:
+  flags.flagd.json: |
+    {
+      "$schema": "https://flagd.dev/schema/v0/flags.json",
+      "flags": {
+        "truss-healthcheck": {
+          "state": "ENABLED",
+          "variants": { "on": true, "off": false },
+          "defaultVariant": "on"
+        }
+      }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: truss-flagd
+spec:
+  selector: { app: truss-flagd }
+  ports:
+    - { name: grpc, port: 8013, targetPort: 8013 }
+    - { name: mgmt, port: 8014, targetPort: 8014 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: truss-flagd
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: truss-flagd }
+  template:
+    metadata:
+      labels: { app: truss-flagd }
+    spec:
+      containers:
+        - name: flagd
+          image: {{ .Values.images.flagd }}
+          args: ["start", "--uri", "file:/etc/flagd/flags.flagd.json", "--port", "8013", "--management-port", "8014", "--log-format", "json"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports: [{ containerPort: 8013 }, { containerPort: 8014 }]
+          readinessProbe: { httpGet: { path: /readyz, port: 8014 }, initialDelaySeconds: 5, periodSeconds: 10 }
+          volumeMounts: [{ name: config, mountPath: /etc/flagd }]
+          resources: {{- toYaml .Values.resources.small | nindent 12 }}
+      volumes:
+        - name: config
+          configMap: { name: truss-flagd-config }

@@ -1,0 +1,484 @@
+---
+title: OAuth2 Consent Bridge
+description: How the Kratos-to-Hydra consent bridge connects authentication with OAuth2 authorization flows.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Truss bridges Ory Kratos (authentication) and Ory Hydra (OAuth2) so that users authenticate once via Kratos and that identity flows seamlessly into OAuth2 authorization. This guide explains how the bridge works, how to configure it, and how to customize the consent experience.
+
+For the full OAuth2 reference, see the [OAuth2 / OIDC guide](./oauth2/).
+
+## How the Bridge Works
+
+When a user initiates an OAuth2 flow (e.g., clicking "Sign in with MyApp"), Hydra needs to verify who they are and whether they consent to sharing data. Hydra does not handle login or consent itself — it delegates to external URLs. Truss provides these endpoints.
+
+The flow has two phases:
+
+### Phase 1: Login
+
+1. The client application redirects the user to Hydra's `/oauth2/auth` endpoint
+2. Hydra generates a **login challenge** and redirects to Truss's login bridge: `GET /api/hydra/bridge/login?login_challenge=CHALLENGE`
+3. The bridge checks for an existing Kratos session (via the `truss_session` cookie)
+   - **Session exists**: The bridge accepts the login challenge with the Kratos identity ID and redirects back to Hydra
+   - **No session**: The bridge redirects to the Kratos login page with a `return_to` URL pointing back to the bridge
+4. After Kratos login, the user returns to the bridge, which now finds a session and accepts
+
+### Phase 2: Consent
+
+1. After login, Hydra generates a **consent challenge** and redirects to Truss's consent bridge: `GET /api/hydra/bridge/consent?consent_challenge=CHALLENGE`
+2. The bridge retrieves the consent request details from Hydra (client name, requested scopes, etc.)
+3. Two paths:
+   - **Skip consent** (first-party apps with `skip_consent: true`): The bridge auto-accepts all requested scopes
+   - **Show consent screen**: The bridge redirects to the dashboard's consent UI where the user approves or denies
+4. After the user's decision, the bridge accepts or rejects the consent challenge with Hydra
+5. Hydra issues tokens and redirects back to the client application
+
+```
+┌──────────┐     ┌───────┐     ┌─────────────────┐     ┌────────┐
+│  Client   │────>│ Hydra │────>│ Truss Login     │────>│ Kratos │
+│  App      │     │       │     │ Bridge          │     │        │
+└──────────┘     │       │<────│ (accept login)  │<────│        │
+                 │       │     └─────────────────┘     └────────┘
+                 │       │────>┌─────────────────┐
+                 │       │     │ Truss Consent   │
+                 │       │<────│ Bridge          │
+                 │       │     │ (accept/reject) │
+                 └───────┘     └─────────────────┘
+                    │
+                    ▼
+              Issues tokens
+              Redirects to client
+```
+
+---
+
+## Setup
+
+### Environment Variables
+
+Set these in `apps/api/.env`:
+
+```env
+# Hydra connection
+HYDRA_PUBLIC_URL=http://localhost:4444
+HYDRA_ADMIN_URL=http://localhost:4445
+HYDRA_ADMIN_TOKEN=your-admin-token
+
+# Kratos connection (for session verification)
+KRATOS_PUBLIC_URL=http://localhost:4433
+
+# Dashboard URL (for consent screen redirects)
+DASHBOARD_URL=http://localhost:5173
+```
+
+### Hydra Configuration
+
+In your Hydra configuration file, point the login and consent URLs to the Truss bridge endpoints:
+
+```yaml
+# hydra.yml
+urls:
+  login: https://your-api.example.com/api/hydra/bridge/login
+  consent: https://your-api.example.com/api/hydra/bridge/consent
+```
+
+Replace `your-api.example.com` with the public URL of your Truss API server.
+
+### Verify Bridge Status
+
+Check that everything is configured correctly:
+
+```bash
+curl http://localhost:8787/api/hydra/bridge/status
+```
+
+Response:
+
+```json
+{
+  "hydra_configured": true,
+  "kratos_configured": true,
+  "bridge_ready": true,
+  "login_url": "https://your-api.example.com/api/hydra/bridge/login",
+  "consent_url": "https://your-api.example.com/api/hydra/bridge/consent"
+}
+```
+
+All three flags must be `true` for the bridge to function. If any are `false`, check the corresponding environment variables.
+
+---
+
+## Consent Screen
+
+When a user has not previously granted consent for the requested scopes (and the client does not have `skip_consent` enabled), Truss displays a standalone consent screen.
+
+### What the User Sees
+
+The consent screen shows:
+
+- **Client identity** — the OAuth2 client's name and logo
+- **Terms of service** and **privacy policy** links (if configured on the client)
+- **Requested scopes** — checkboxes for each scope (e.g., `openid`, `profile`, `email`, `offline_access`)
+- **Approve / Deny** buttons
+- **Remember toggle** — when checked, skips this consent screen for future requests from this client
+
+### Custom Consent UI
+
+If you want to build a custom consent screen instead of using the built-in one, you can use the consent bridge API directly:
+
+#### 1. Get Consent Challenge Details
+
+```bash
+curl "http://localhost:8787/api/hydra/bridge/consent/info?consent_challenge=CHALLENGE"
+```
+
+Response:
+
+```json
+{
+  "challenge": "consent-challenge-id",
+  "client": {
+    "client_id": "my-app",
+    "client_name": "My Application",
+    "logo_uri": "https://example.com/logo.png",
+    "tos_uri": "https://example.com/tos",
+    "policy_uri": "https://example.com/privacy"
+  },
+  "requested_scope": ["openid", "profile", "email", "offline_access"],
+  "requested_access_token_audience": [],
+  "subject": "user-uuid",
+  "skip": false
+}
+```
+
+The `skip` field indicates whether the user has previously granted consent with the "remember" option. If `true`, you can auto-accept.
+
+#### 2. Accept Consent
+
+```bash
+curl -X POST http://localhost:8787/api/hydra/bridge/consent/accept \
+  -H "Content-Type: application/json" \
+  -d '{
+    "challenge": "CONSENT_CHALLENGE",
+    "grant_scope": ["openid", "profile", "email"],
+    "remember": true
+  }'
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `challenge` | The consent challenge from the redirect |
+| `grant_scope` | Array of scopes the user approved (subset of `requested_scope`) |
+| `remember` | If `true`, Hydra remembers this consent and skips the screen next time |
+
+The response includes a `redirect_to` URL. Redirect the user there to continue the OAuth2 flow.
+
+#### 3. Reject Consent
+
+```bash
+curl -X POST http://localhost:8787/api/hydra/bridge/consent/reject \
+  -H "Content-Type: application/json" \
+  -d '{
+    "challenge": "CONSENT_CHALLENGE",
+    "error": "access_denied",
+    "error_description": "The user denied the request"
+  }'
+```
+
+The user is redirected back to the client with an `error=access_denied` parameter.
+
+### Full Custom Consent Example
+
+<Tabs>
+  <TabItem label="JavaScript">
+```javascript
+// Custom consent page — server-side route handler
+app.get("/consent", async (req, res) => {
+  const challenge = req.query.consent_challenge;
+
+  // 1. Fetch consent details
+  const info = await fetch(
+    `${TRUSS_URL}/api/hydra/bridge/consent/info?consent_challenge=${challenge}`
+  ).then(r => r.json());
+
+  // 2. If previously remembered, auto-accept
+  if (info.skip) {
+    const accept = await fetch(`${TRUSS_URL}/api/hydra/bridge/consent/accept`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        challenge,
+        grant_scope: info.requested_scope,
+        remember: true,
+      }),
+    }).then(r => r.json());
+    return res.redirect(accept.redirect_to);
+  }
+
+  // 3. Render consent form
+  res.render("consent", {
+    challenge,
+    client: info.client,
+    scopes: info.requested_scope,
+  });
+});
+
+// Handle consent form submission
+app.post("/consent", async (req, res) => {
+  const { challenge, grant_scope, remember, action } = req.body;
+
+  if (action === "deny") {
+    const reject = await fetch(`${TRUSS_URL}/api/hydra/bridge/consent/reject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        challenge,
+        error: "access_denied",
+        error_description: "The user denied the request",
+      }),
+    }).then(r => r.json());
+    return res.redirect(reject.redirect_to);
+  }
+
+  const accept = await fetch(`${TRUSS_URL}/api/hydra/bridge/consent/accept`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      challenge,
+      grant_scope: Array.isArray(grant_scope) ? grant_scope : [grant_scope],
+      remember: remember === "on",
+    }),
+  }).then(r => r.json());
+  return res.redirect(accept.redirect_to);
+});
+```
+  </TabItem>
+  <TabItem label="Python">
+```python
+from flask import Flask, request, redirect, render_template
+import requests
+
+app = Flask(__name__)
+TRUSS_URL = "http://localhost:8787"
+
+@app.get("/consent")
+def consent_page():
+    challenge = request.args["consent_challenge"]
+
+    # 1. Fetch consent details
+    info = requests.get(
+        f"{TRUSS_URL}/api/hydra/bridge/consent/info",
+        params={"consent_challenge": challenge},
+    ).json()
+
+    # 2. If previously remembered, auto-accept
+    if info.get("skip"):
+        accept = requests.post(
+            f"{TRUSS_URL}/api/hydra/bridge/consent/accept",
+            json={
+                "challenge": challenge,
+                "grant_scope": info["requested_scope"],
+                "remember": True,
+            },
+        ).json()
+        return redirect(accept["redirect_to"])
+
+    # 3. Render consent form
+    return render_template(
+        "consent.html",
+        challenge=challenge,
+        client=info["client"],
+        scopes=info["requested_scope"],
+    )
+
+@app.post("/consent")
+def consent_submit():
+    challenge = request.form["challenge"]
+    action = request.form.get("action")
+
+    if action == "deny":
+        reject = requests.post(
+            f"{TRUSS_URL}/api/hydra/bridge/consent/reject",
+            json={
+                "challenge": challenge,
+                "error": "access_denied",
+                "error_description": "The user denied the request",
+            },
+        ).json()
+        return redirect(reject["redirect_to"])
+
+    accept = requests.post(
+        f"{TRUSS_URL}/api/hydra/bridge/consent/accept",
+        json={
+            "challenge": challenge,
+            "grant_scope": request.form.getlist("grant_scope"),
+            "remember": "remember" in request.form,
+        },
+    ).json()
+    return redirect(accept["redirect_to"])
+```
+  </TabItem>
+</Tabs>
+
+---
+
+## Skip Consent for First-Party Apps
+
+First-party applications (your own frontend, mobile app, etc.) typically should not show a consent screen — the user already trusts your app. Enable skip consent per client:
+
+```bash
+curl -X PUT http://localhost:8787/api/hydra/clients/{client_id} \
+  -H "Content-Type: application/json" \
+  -d '{"metadata": {"skip_consent": true}}'
+```
+
+Or toggle it in the dashboard: **OAuth2 > Clients > Edit > "Skip Consent"**.
+
+When skip consent is enabled, the consent bridge auto-approves all requested scopes without showing the consent screen.
+
+---
+
+## Custom Claims
+
+During the consent phase, Truss can inject custom claims into both ID tokens and access tokens. Claims are resolved from the Kratos identity using template variables.
+
+### Configure Claims
+
+```bash
+curl -X PUT http://localhost:8787/api/hydra/claims-config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id_token_claims": {
+      "name": "{{traits.name}}",
+      "email": "{{traits.email}}",
+      "org_id": "{{metadata_public.org_id}}"
+    },
+    "access_token_claims": {
+      "role": "{{metadata_public.role}}",
+      "tenant": "{{metadata_public.tenant_id}}"
+    }
+  }'
+```
+
+### Available Template Variables
+
+| Path | Source |
+|------|--------|
+| `{{traits.*}}` | Identity schema traits (name, email, phone, etc.) |
+| `{{metadata_public.*}}` | Public metadata fields set on the identity |
+| `{{id}}` | The Kratos identity UUID |
+
+These claims are resolved at consent time and embedded in the issued tokens. Verify them using the [JWT Debugger](./oauth2/#jwt-debugger--decoder) in the dashboard.
+
+---
+
+## Consent Sessions
+
+After a user grants consent, Hydra stores a consent session. You can list, inspect, and revoke these sessions.
+
+### List Consent Sessions for a User
+
+```bash
+curl http://localhost:8787/api/hydra/consent/{subject_id}
+```
+
+Response:
+
+```json
+[
+  {
+    "consent_request": {
+      "client": {
+        "client_id": "my-app",
+        "client_name": "My Application"
+      },
+      "requested_scope": ["openid", "profile", "email"]
+    },
+    "grant_scope": ["openid", "profile", "email"],
+    "remember": true,
+    "handled_at": "2025-01-15T10:00:00Z"
+  }
+]
+```
+
+Results show consent sessions for your OAuth2 clients.
+
+### Revoke Consent
+
+```bash
+# Revoke consent for a specific client
+curl -X DELETE "http://localhost:8787/api/hydra/consent/{subject_id}?client={client_id}"
+
+# Revoke all consent for a user
+curl -X DELETE http://localhost:8787/api/hydra/consent/{subject_id}
+```
+
+After revocation, the user will be prompted for consent again on the next OAuth2 flow with that client.
+
+### Dashboard
+
+The **OAuth2 > Consent Sessions** tab provides a search interface to find consent sessions by subject (user ID). Each session shows the client name, granted scopes, and a "Revoke" button.
+
+---
+
+## RP-Initiated Logout
+
+When a user logs out, you can revoke both their login and consent sessions across all OAuth2 clients:
+
+```bash
+curl -X POST http://localhost:8787/api/hydra/logout \
+  -H "Content-Type: application/json" \
+  -d '{"subject": "user-uuid"}'
+```
+
+This ensures the user is fully logged out of all OAuth2 applications that were authorized through Truss.
+
+For per-client logout, use **front-channel** or **back-channel logout URIs** configured on each client (see the [OAuth2 guide](./oauth2/#front-channel-logout)).
+
+---
+
+## Troubleshooting
+
+### Bridge Status Shows `false`
+
+If `curl /api/hydra/bridge/status` shows any field as `false`:
+
+| Field | Fix |
+|-------|-----|
+| `hydra_configured: false` | Set `HYDRA_ADMIN_URL` and `HYDRA_ADMIN_TOKEN` in `.env` |
+| `kratos_configured: false` | Set `KRATOS_PUBLIC_URL` in `.env` |
+| `bridge_ready: false` | Both Hydra and Kratos must be configured; also check `DASHBOARD_URL` |
+
+### Login Redirect Loop
+
+If the user is stuck in a redirect loop between Hydra and the login bridge:
+
+1. Check that `KRATOS_PUBLIC_URL` is reachable from the Truss API server
+2. Verify the Kratos session cookie name matches what Truss expects (`ory_kratos_session` or `truss_session`)
+3. Ensure cookies are not blocked by SameSite or domain mismatch (Kratos and Truss should share the same domain or use compatible cookie settings)
+
+### Consent Screen Not Appearing
+
+If the consent screen is skipped when it should not be:
+
+1. Check if the client has `skip_consent: true` in its metadata
+2. Check if the user previously granted consent with "remember" enabled — revoke the consent session to force re-prompting
+
+---
+
+## API Reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/hydra/bridge/login` | Login bridge (Hydra redirect target) |
+| `GET` | `/api/hydra/bridge/consent` | Consent bridge (Hydra redirect target) |
+| `GET` | `/api/hydra/bridge/consent/info` | Get consent challenge details |
+| `POST` | `/api/hydra/bridge/consent/accept` | Accept consent challenge |
+| `POST` | `/api/hydra/bridge/consent/reject` | Reject consent challenge |
+| `GET` | `/api/hydra/bridge/status` | Check bridge configuration status |
+| `GET` | `/api/hydra/consent/{subject}` | List consent sessions for a user |
+| `DELETE` | `/api/hydra/consent/{subject}` | Revoke consent sessions |
+| `GET` | `/api/hydra/claims-config` | Get custom claims configuration |
+| `PUT` | `/api/hydra/claims-config` | Update custom claims configuration |
+| `POST` | `/api/hydra/logout` | RP-Initiated logout (revoke all sessions) |

@@ -1,0 +1,128 @@
+/* Truss Docs — Custom Starlight Theme
+ * Brand accent: deep wine #9f1239
+ * Accent scale: 50 #fff1f2 .. 950 #2d0a14
+ */
+
+/* ------------------------------------------------------------------ */
+/* Font stack                                                         */
+/* ------------------------------------------------------------------ */
+:root {
+  --sl-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* ------------------------------------------------------------------ */
+/* Accent hue & saturation (used by Starlight's generated scale)      */
+/* ------------------------------------------------------------------ */
+:root {
+  --sl-hue-accent: 345;
+  --sl-saturation-accent: 80%;
+}
+
+/* ------------------------------------------------------------------ */
+/* Dark theme (default) — accent semantic tokens                      */
+/* ------------------------------------------------------------------ */
+:root {
+  --sl-color-accent-low: #5c1a2e;      /* wine-800: sidebar active bg — readable */
+  --sl-color-accent: #be123c;          /* accent-500: primary brand — brighter */
+  --sl-color-accent-high: #fecdd3;     /* accent-200: high-contrast text on dark */
+}
+
+/* ------------------------------------------------------------------ */
+/* Light theme — accent semantic tokens                               */
+/* ------------------------------------------------------------------ */
+:root[data-theme="light"] {
+  --sl-color-accent-low: #ffe4e6;      /* accent-100: light bg tint */
+  --sl-color-accent: #9f1239;          /* accent-600: primary brand (same) */
+  --sl-color-accent-high: #4a0519;     /* accent-900: dark text on accent bg */
+}
+
+/* ------------------------------------------------------------------ */
+/* Hero section — premium feel on splash / landing pages              */
+/* ------------------------------------------------------------------ */
+.hero {
+  --sl-color-hero-accent: #9f1239;
+}
+
+.hero .hero-html,
+.page .hero {
+  padding-block: 3rem;
+}
+
+/* Subtle radial glow behind the hero in dark mode */
+:root:not([data-theme="light"]) .hero {
+  background:
+    radial-gradient(
+      ellipse 80% 60% at 50% 40%,
+      rgba(159, 18, 57, 0.12) 0%,
+      transparent 70%
+    );
+}
+
+/* Hero title — use the accent for emphasis */
+.hero .hero-title {
+  color: var(--sl-color-white);
+}
+
+.hero .hero-title strong,
+.hero .hero-title em {
+  color: #d4768e; /* accent-400 — pops against dark bg */
+  font-style: normal;
+}
+
+:root[data-theme="light"] .hero .hero-title strong,
+:root[data-theme="light"] .hero .hero-title em {
+  color: #9f1239; /* accent-600 */
+}
+
+/* Hero tagline */
+.hero .hero-tagline {
+  font-size: 1.15rem;
+  max-width: 42ch;
+}
+
+/* Hero call-to-action buttons */
+.hero .action.action-primary {
+  background: #9f1239;
+  border-color: #881337;
+  color: #fff;
+}
+.hero .action.action-primary:hover {
+  background: #881337;
+  border-color: #6d1030;
+}
+
+/* ------------------------------------------------------------------ */
+/* Links — inherit accent                                             */
+/* ------------------------------------------------------------------ */
+:root {
+  --sl-color-text-accent: #f472b6;     /* rose-400: bright, readable on dark bg */
+}
+
+:root[data-theme="light"] {
+  --sl-color-text-accent: #9f1239;     /* accent-600: readable on light bg */
+}
+
+/* ------------------------------------------------------------------ */
+/* Sidebar active item highlight                                      */
+/* ------------------------------------------------------------------ */
+nav.sidebar a[aria-current="page"] {
+  background: rgba(190, 18, 60, 0.18);
+  border-inline-start-color: #e11d48;
+  color: #fecdd3;
+  font-weight: 600;
+}
+
+:root[data-theme="light"] nav.sidebar a[aria-current="page"] {
+  background: rgba(159, 18, 57, 0.10);
+  border-inline-start-color: #be123c;
+  color: #881337;
+  font-weight: 600;
+}
+
+/* Sidebar hover — subtle warm tint */
+nav.sidebar a:hover:not([aria-current="page"]) {
+  background: rgba(190, 18, 60, 0.08);
+}
+:root[data-theme="light"] nav.sidebar a:hover:not([aria-current="page"]) {
+  background: rgba(159, 18, 57, 0.05);
+}

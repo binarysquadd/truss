@@ -1,0 +1,260 @@
+---
+title: Client SDK
+description: Framework-agnostic REST API patterns for interacting with Truss.
+---
+
+Truss exposes a framework-agnostic REST API that works with any language or HTTP client. Instead of locking you into a proprietary SDK, Truss uses standard `fetch` (or any HTTP library) with JSON payloads — the same patterns you already know.
+
+## Why fetch-based?
+
+- **Zero dependencies** — no SDK package to install, version, or bundle.
+- **Works everywhere** — browsers, Node.js, Deno, Bun, Python, Go, cURL.
+- **Framework-agnostic** — the same API calls work whether you use Next.js, SvelteKit, Remix, or a plain script.
+- **Migration API** — Truss auto-detects 15+ migration frameworks (Prisma, Drizzle, Knex, TypeORM, Sequelize, golang-migrate, Flyway, Liquibase, and more) so you can bring your existing schema tooling.
+
+## Base setup
+
+```typescript
+const TRUSS_URL = 'http://localhost:8787';
+const TRUSS_KEY = 'truss_pk_your_anon_key'; // or truss_sk_ for service_role
+
+async function truss(path: string, options: RequestInit = {}) {
+  const res = await fetch(`${TRUSS_URL}${path}`, {
+    ...options,
+    headers: {
+      'apikey': TRUSS_KEY,
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+  return res.json();
+}
+```
+
+You can wrap this helper in a module and import it anywhere in your app. For server-side usage, use a `service_role` key (`truss_sk_`). For client-side (browser) usage, use the `anon` key (`truss_pk_`).
+
+## Querying data
+
+```typescript
+// Select all users
+const users = await truss('/v1/db/users');
+
+// With filters and ordering
+const activeUsers = await truss(
+  '/v1/db/users?active=eq.true&order=created_at.desc&limit=10'
+);
+
+// Select specific columns
+const names = await truss('/v1/db/users?select=id,name');
+
+// Filter with IN
+const specific = await truss('/v1/db/users?id=in.(1,2,3)');
+```
+
+## Inserting data
+
+```typescript
+// Single row
+const [newUser] = await truss('/v1/db/users', {
+  method: 'POST',
+  body: JSON.stringify({ name: 'Alice', email: 'alice@example.com' }),
+});
+
+// Multiple rows
+const newUsers = await truss('/v1/db/users', {
+  method: 'POST',
+  body: JSON.stringify([
+    { name: 'Alice', email: 'alice@example.com' },
+    { name: 'Bob', email: 'bob@example.com' },
+  ]),
+});
+```
+
+## Updating data
+
+```typescript
+// Update matching rows (filter required)
+const updated = await truss('/v1/db/users?id=eq.42', {
+  method: 'PATCH',
+  body: JSON.stringify({ name: 'Updated Name' }),
+});
+```
+
+## Deleting data
+
+```typescript
+// Delete matching rows (filter required)
+const deleted = await truss('/v1/db/users?id=eq.42', {
+  method: 'DELETE',
+});
+```
+
+## Calling functions
+
+```typescript
+const result = await truss('/v1/db/rpc/calculate_total', {
+  method: 'POST',
+  body: JSON.stringify({ order_id: 42 }),
+});
+```
+
+## Running raw SQL
+
+Requires a `service_role` key:
+
+```typescript
+const SERVICE_KEY = 'truss_sk_your_service_key';
+
+const result = await fetch(`${TRUSS_URL}/v1/sql`, {
+  method: 'POST',
+  headers: {
+    'apikey': SERVICE_KEY,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    sql: 'SELECT * FROM users WHERE email ILIKE $1',
+    params: ['%@example.com'],
+  }),
+});
+
+const { rows, columns, rowCount } = await result.json();
+```
+
+## Transactions
+
+```typescript
+const { results } = await fetch(`${TRUSS_URL}/v1/sql/transaction`, {
+  method: 'POST',
+  headers: {
+    'apikey': SERVICE_KEY,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    statements: [
+      { sql: 'INSERT INTO orders (total) VALUES ($1) RETURNING id', params: [99.99] },
+      { sql: 'INSERT INTO order_items (order_id, product_id) VALUES ($1, $2)', params: [null, 5] },
+    ],
+  }),
+}).then(r => r.json());
+```
+
+## File uploads
+
+```typescript
+// 1. Get a presigned upload URL
+const { url, headers } = await fetch(`${TRUSS_URL}/api/storage/buckets/my-bucket/objects/presign-upload`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ key: 'photos/avatar.jpg', contentType: 'image/jpeg' }),
+}).then(r => r.json());
+
+// 2. Upload directly to S3
+await fetch(url, {
+  method: 'PUT',
+  headers,
+  body: file, // File object from <input type="file">
+});
+```
+
+## Realtime (WebSocket)
+
+```typescript
+function connectRealtime(url = 'ws://localhost:8787/realtime') {
+  const ws = new WebSocket(url);
+
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    console.log(`${data.operation} on ${data.table}:`, data.row);
+  };
+
+  ws.onclose = () => {
+    // Auto-reconnect after 2 seconds
+    setTimeout(() => connectRealtime(url), 2000);
+  };
+
+  return ws;
+}
+
+const ws = connectRealtime();
+```
+
+## Using with popular frameworks
+
+The fetch-based pattern works identically across frameworks. Here are quick examples:
+
+### Next.js (App Router)
+
+```typescript
+// app/api/users/route.ts
+export async function GET() {
+  const users = await truss('/v1/db/users?limit=50');
+  return Response.json(users);
+}
+```
+
+### SvelteKit
+
+```typescript
+// src/routes/users/+page.server.ts
+export async function load() {
+  const users = await truss('/v1/db/users');
+  return { users };
+}
+```
+
+### Plain Node.js / Bun / Deno
+
+```typescript
+const users = await truss('/v1/db/users');
+console.log(users);
+```
+
+### Python
+
+```python
+import requests
+
+TRUSS_URL = "http://localhost:8787"
+TRUSS_KEY = "truss_pk_your_anon_key"
+
+headers = {"apikey": TRUSS_KEY, "Content-Type": "application/json"}
+users = requests.get(f"{TRUSS_URL}/v1/db/users", headers=headers).json()
+```
+
+### cURL
+
+```bash
+curl -H "apikey: truss_pk_your_anon_key" \
+     http://localhost:8787/v1/db/users
+```
+
+## Platform status
+
+```typescript
+const status = await fetch(`${TRUSS_URL}/v1/status`, {
+  headers: { 'apikey': SERVICE_KEY },
+}).then(r => r.json());
+
+console.log(`Database: ${status.database.size_gb} GB`);
+console.log(`Tables: ${status.database.table_count}`);
+console.log(`Auth MAU: ${status.auth.mau}`);
+console.log(`Storage: ${status.storage.size_gb} GB`);
+```
+
+## Error handling
+
+```typescript
+try {
+  const users = await truss('/v1/db/nonexistent_table');
+} catch (err) {
+  // Error messages come from the API:
+  // "relation \"nonexistent_table\" does not exist"
+  console.error(err.message);
+}
+```
+
+The API returns structured errors with `error`, `code` (Postgres error code), `detail`, and `hint` fields when available.

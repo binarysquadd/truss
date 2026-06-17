@@ -1,0 +1,1222 @@
+---
+title: OAuth2 / OIDC
+description: Complete reference for OAuth2 and OpenID Connect — grant types, OIDC features, client management, token lifecycle, JWK management, consent bridge, and developer tools.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Truss provides full OAuth2 and OpenID Connect support powered by Ory Hydra. Issue access tokens, manage OAuth2 clients, run authorization code flows with PKCE, introspect and revoke tokens, manage signing keys, bridge Kratos authentication into OAuth2 consent flows, and debug tokens — all from the dashboard or API.
+
+This guide covers all **38 OAuth2/OIDC features** in Truss.
+
+## Setup
+
+Set these environment variables in `apps/api/.env`:
+
+```env
+HYDRA_PUBLIC_URL=http://localhost:4444
+HYDRA_ADMIN_URL=http://localhost:4445
+HYDRA_ADMIN_TOKEN=your-admin-token
+```
+
+Hydra uses its own dedicated `hydra` database (separate from the Kratos/Keto database) to avoid table collisions.
+
+For the Kratos-to-Hydra consent bridge, you also need:
+
+```env
+KRATOS_PUBLIC_URL=http://localhost:4433
+DASHBOARD_URL=http://localhost:5173
+```
+
+And in your Hydra configuration:
+
+```yaml
+urls:
+  login: https://your-api.example.com/api/hydra/bridge/login
+  consent: https://your-api.example.com/api/hydra/bridge/consent
+```
+
+---
+
+## Grant Types
+
+Truss supports all seven OAuth2 grant types available in Ory Hydra.
+
+### Authorization Code
+
+The standard OAuth2 authorization code grant for server-side web applications. The user authenticates at the authorization server, which issues an authorization code that the client exchanges for tokens.
+
+**Dashboard UI:** OAuth2 > Flow Tester > select "Authorization Code"
+
+**Flow:**
+
+1. Redirect the user to the authorization endpoint
+2. User authenticates and grants consent
+3. Hydra redirects back with an authorization code
+4. Your server exchanges the code for tokens
+
+```bash
+# Step 1: Redirect user to authorize
+${HYDRA_PUBLIC_URL}/oauth2/auth?\
+  client_id=YOUR_CLIENT_ID&\
+  response_type=code&\
+  redirect_uri=http://localhost:3000/callback&\
+  scope=openid+offline_access&\
+  state=RANDOM_STATE
+
+# Step 2: Exchange code for tokens
+curl -X POST ${HYDRA_PUBLIC_URL}/oauth2/token \
+  -u "CLIENT_ID:CLIENT_SECRET" \
+  -d "grant_type=authorization_code" \
+  -d "code=AUTH_CODE" \
+  -d "redirect_uri=http://localhost:3000/callback"
+```
+
+### Authorization Code + PKCE
+
+The recommended flow for public clients (SPAs, mobile apps, CLIs). PKCE (Proof Key for Code Exchange) prevents authorization code interception attacks by binding the code to a cryptographic verifier.
+
+**Dashboard UI:** OAuth2 > Flow Tester > select "Auth Code + PKCE"
+
+```bash
+# Step 1: Generate code verifier and challenge
+CODE_VERIFIER=$(openssl rand -base64 32 | tr -d '=+/' | head -c 43)
+CODE_CHALLENGE=$(echo -n "$CODE_VERIFIER" | openssl dgst -sha256 -binary | base64 | tr -d '=' | tr '+/' '-_')
+
+# Step 2: Redirect user to authorize
+${HYDRA_PUBLIC_URL}/oauth2/auth?\
+  client_id=YOUR_CLIENT_ID&\
+  response_type=code&\
+  redirect_uri=http://localhost:3000/callback&\
+  scope=openid+offline_access&\
+  code_challenge=${CODE_CHALLENGE}&\
+  code_challenge_method=S256&\
+  state=RANDOM_STATE
+
+# Step 3: Exchange code for tokens (no client secret needed)
+curl -X POST ${HYDRA_PUBLIC_URL}/oauth2/token \
+  -d "grant_type=authorization_code" \
+  -d "code=AUTH_CODE" \
+  -d "redirect_uri=http://localhost:3000/callback" \
+  -d "client_id=YOUR_CLIENT_ID" \
+  -d "code_verifier=${CODE_VERIFIER}"
+```
+
+### Client Credentials
+
+For machine-to-machine (service account) authentication. No user interaction required. The client authenticates directly with its credentials to obtain an access token.
+
+**Dashboard UI:** OAuth2 > Flow Tester > select "Client Credentials"
+
+**API endpoint:** `POST ${HYDRA_PUBLIC_URL}/oauth2/token`
+
+```bash
+curl -X POST ${HYDRA_PUBLIC_URL}/oauth2/token \
+  -u "CLIENT_ID:CLIENT_SECRET" \
+  -d "grant_type=client_credentials" \
+  -d "scope=openid"
+```
+
+Response:
+
+```json
+{
+  "access_token": "ory_at_...",
+  "token_type": "bearer",
+  "expires_in": 3599,
+  "scope": "openid"
+}
+```
+
+### Device Authorization (RFC 8628)
+
+For input-constrained devices like smart TVs, IoT devices, and CLI tools. The device displays a code that the user enters on a separate device (phone/laptop) to authorize.
+
+**Dashboard UI:** OAuth2 > Flow Tester > select "Device Authorization"
+
+**Flow:**
+
+1. Device requests a device code from Hydra
+2. Device displays the `user_code` and `verification_uri` to the user
+3. User visits the verification URI on another device and enters the code
+4. Device polls the token endpoint until the user completes authorization
+
+```bash
+# Step 1: Request device code
+curl -X POST ${HYDRA_PUBLIC_URL}/oauth2/device/auth \
+  -d "client_id=YOUR_CLIENT_ID" \
+  -d "scope=openid offline_access"
+
+# Response includes: device_code, user_code, verification_uri, interval
+
+# Step 2: User visits verification_uri and enters user_code
+
+# Step 3: Device polls for tokens
+curl -X POST ${HYDRA_PUBLIC_URL}/oauth2/token \
+  -d "grant_type=urn:ietf:params:oauth:grant-type:device_code" \
+  -d "device_code=DEVICE_CODE" \
+  -d "client_id=YOUR_CLIENT_ID"
+
+# Returns "authorization_pending" until user completes, then returns tokens
+```
+
+### Refresh Token
+
+Refresh tokens allow clients to obtain new access tokens without requiring the user to re-authenticate. Hydra supports **rotation** (each refresh issues a new refresh token, invalidating the old one) and **reuse detection** (if a rotated-out refresh token is reused, all tokens for that grant are revoked — indicating a potential token theft).
+
+**API endpoint:** `POST ${HYDRA_PUBLIC_URL}/oauth2/token`
+
+```bash
+curl -X POST ${HYDRA_PUBLIC_URL}/oauth2/token \
+  -u "CLIENT_ID:CLIENT_SECRET" \
+  -d "grant_type=refresh_token" \
+  -d "refresh_token=REFRESH_TOKEN"
+```
+
+Response:
+
+```json
+{
+  "access_token": "ory_at_new_...",
+  "refresh_token": "ory_rt_new_...",
+  "token_type": "bearer",
+  "expires_in": 3599,
+  "scope": "openid offline_access"
+}
+```
+
+Include the `offline_access` scope in the initial authorization request to receive a refresh token.
+
+### Implicit (Deprecated)
+
+The implicit grant returns tokens directly in the redirect URI fragment. It is **deprecated** per OAuth 2.1 — use Authorization Code + PKCE instead.
+
+Available for backward compatibility. The `response_type` is `token` (or `id_token token` for OIDC).
+
+```bash
+# Not recommended — use Auth Code + PKCE instead
+${HYDRA_PUBLIC_URL}/oauth2/auth?\
+  client_id=YOUR_CLIENT_ID&\
+  response_type=token&\
+  redirect_uri=http://localhost:3000/callback&\
+  scope=openid&\
+  state=RANDOM_STATE
+```
+
+### Hybrid Flow
+
+Combines authorization code and implicit flows. Returns both an authorization code and tokens (ID token and/or access token) in the authorization response. Useful when you need an ID token immediately at the front-end while the back-end exchanges the code for a full token set.
+
+Supported `response_type` combinations:
+- `code id_token` — returns code + ID token
+- `code token` — returns code + access token
+- `code id_token token` — returns code + ID token + access token
+
+```bash
+${HYDRA_PUBLIC_URL}/oauth2/auth?\
+  client_id=YOUR_CLIENT_ID&\
+  response_type=code+id_token&\
+  redirect_uri=http://localhost:3000/callback&\
+  scope=openid&\
+  nonce=RANDOM_NONCE&\
+  state=RANDOM_STATE
+```
+
+---
+
+## OIDC (OpenID Connect)
+
+Truss exposes the full OIDC layer on top of OAuth2.
+
+### OIDC Discovery
+
+Hydra publishes a standard OpenID Connect Discovery document at `/.well-known/openid-configuration`. The Truss dashboard provides a **pretty-viewer** that displays all endpoints as clickable links, lists supported values (grant types, response types, signing algorithms), and offers a raw JSON view with copy-to-clipboard.
+
+**Dashboard UI:** OAuth2 > Overview > Discovery section, or OAuth2 > OIDC Discovery tab
+
+**API endpoints:**
+
+```bash
+# Direct from Hydra
+curl ${HYDRA_PUBLIC_URL}/.well-known/openid-configuration
+
+# Via Truss dashboard API
+curl http://localhost:8787/api/hydra/discovery
+
+# Via Truss client API (requires API key)
+curl http://localhost:8787/v1/oauth2/discovery \
+  -H "apikey: truss_sk_your_key"
+```
+
+The discovery document includes:
+- `issuer` — the base URL for all tokens
+- `authorization_endpoint`, `token_endpoint`, `userinfo_endpoint`
+- `jwks_uri` — the JWKS endpoint for token verification
+- `grant_types_supported`, `response_types_supported`
+- `subject_types_supported`, `id_token_signing_alg_values_supported`
+- `scopes_supported`, `claims_supported`
+
+### ID Tokens
+
+Hydra issues **RS256-signed** ID tokens as JWTs. ID tokens contain standard OIDC claims (`iss`, `sub`, `aud`, `exp`, `iat`, `nonce`) plus any custom claims configured via the claims editor.
+
+Verify ID tokens using the public keys from the JWKS endpoint:
+
+```bash
+curl ${HYDRA_PUBLIC_URL}/.well-known/jwks.json
+```
+
+### UserInfo Endpoint
+
+The OIDC UserInfo endpoint returns claims about the authenticated user. Requires a valid access token with the `openid` scope.
+
+**API endpoint (proxied through Truss):**
+
+```bash
+curl ${HYDRA_PUBLIC_URL}/userinfo \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+```
+
+Returns claims based on the granted scopes (e.g., `profile`, `email`, `address`, `phone`).
+
+### Custom Claims
+
+Truss provides a claims editor that lets you define custom claims for both ID tokens and access tokens. Claims are injected during the consent flow via the Kratos-Hydra bridge.
+
+**Dashboard UI:** OAuth2 > Clients > select client > Custom Claims section
+
+**API endpoints:**
+
+```bash
+# Get current claims configuration
+curl http://localhost:8787/api/hydra/claims-config
+
+# Update claims configuration
+curl -X PUT http://localhost:8787/api/hydra/claims-config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id_token_claims": {
+      "name": "{{traits.name}}",
+      "email": "{{traits.email}}",
+      "org_id": "{{metadata_public.org_id}}"
+    },
+    "access_token_claims": {
+      "role": "{{metadata_public.role}}",
+      "tenant": "{{metadata_public.tenant_id}}"
+    }
+  }'
+```
+
+Template variables use `{{path}}` syntax and resolve against the Kratos identity object. Available paths include:
+- `traits.*` — identity schema traits (name, email, etc.)
+- `metadata_public.*` — public metadata fields
+- `id` — the identity UUID
+
+### Pairwise Subject Identifiers
+
+When configured, Hydra issues a unique `sub` claim per client rather than the user's global identity ID. This prevents clients from correlating users across applications.
+
+Configure per-client by setting `subject_type` to `pairwise` when creating or updating a client:
+
+```bash
+curl -X POST http://localhost:8787/api/hydra/clients \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_name": "Third-Party App",
+    "subject_type": "pairwise",
+    "sector_identifier_uri": "https://example.com/sector",
+    "grant_types": ["authorization_code"],
+    "response_types": ["code"],
+    "redirect_uris": ["https://example.com/callback"]
+  }'
+```
+
+### Front-Channel Logout
+
+Enables logout notification via browser redirect. When a user logs out, Hydra redirects the browser to each client's `frontchannel_logout_uri` to clear client-side sessions.
+
+**Dashboard UI:** OAuth2 > Clients > select client > Token Config > Front-Channel Logout URI
+
+**API endpoint:**
+
+```bash
+curl -X PATCH http://localhost:8787/api/hydra/clients/{client_id}/token-config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "frontchannel_logout_uri": "https://myapp.example.com/logout/callback"
+  }'
+```
+
+### Back-Channel Logout
+
+Enables server-to-server logout notification. When a user logs out, Hydra sends a POST request with a `logout_token` (JWT) to each client's `backchannel_logout_uri`. More reliable than front-channel because it does not depend on browser redirects.
+
+**Dashboard UI:** OAuth2 > Clients > select client > Token Config > Back-Channel Logout URI
+
+**API endpoint:**
+
+```bash
+curl -X PATCH http://localhost:8787/api/hydra/clients/{client_id}/token-config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backchannel_logout_uri": "https://myapp.example.com/api/logout"
+  }'
+```
+
+### RP-Initiated Logout
+
+Relying Party (RP) initiated logout revokes all login and consent sessions for a given subject. Use this when a user clicks "Log out" in your application and you want to end their sessions across all OAuth2 clients.
+
+**Dashboard UI:** OAuth2 > Clients > Consent Sessions > Revoke All
+
+**API endpoint:**
+
+```bash
+curl -X POST http://localhost:8787/api/hydra/logout \
+  -H "Content-Type: application/json" \
+  -d '{ "subject": "user-uuid-here" }'
+```
+
+This deletes both login sessions and consent sessions for the subject in Hydra.
+
+---
+
+## Client Management
+
+Truss provides full CRUD for OAuth2 clients.
+
+### Client CRUD
+
+**Dashboard UI:** OAuth2 > Clients tab
+
+**API endpoints:**
+
+```bash
+# List all clients
+curl http://localhost:8787/api/hydra/clients
+
+# Get a specific client
+curl http://localhost:8787/api/hydra/clients/{client_id}
+
+# Create a client
+curl -X POST http://localhost:8787/api/hydra/clients \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_name": "My Web App",
+    "grant_types": ["authorization_code", "refresh_token"],
+    "response_types": ["code"],
+    "redirect_uris": ["http://localhost:3000/callback"],
+    "scope": "openid offline_access",
+    "token_endpoint_auth_method": "client_secret_basic"
+  }'
+
+# Update a client
+curl -X PUT http://localhost:8787/api/hydra/clients/{client_id} \
+  -H "Content-Type: application/json" \
+  -d '{ "client_name": "Updated Name", "grant_types": ["authorization_code", "refresh_token", "client_credentials"] }'
+
+# Delete a client
+curl -X DELETE http://localhost:8787/api/hydra/clients/{client_id}
+```
+
+All mutations are audit-logged.
+
+### Public vs Confidential Toggle
+
+Controls how the client authenticates at the token endpoint.
+
+**Dashboard UI:** OAuth2 > Clients > Edit > "Client Type" toggle
+
+- **Public** (`token_endpoint_auth_method: "none"`) — for SPAs, mobile apps, CLIs. Cannot keep a secret. Must use PKCE.
+- **Confidential** (`token_endpoint_auth_method: "client_secret_basic"` or `"client_secret_post"`) — for server-side apps. Authenticates with client ID + secret.
+
+### Grant Type Selector
+
+A checkbox UI in the dashboard client editor that lets you toggle which grant types the client is allowed to use:
+
+- `authorization_code`
+- `client_credentials`
+- `refresh_token`
+- `implicit`
+- `urn:ietf:params:oauth:grant-type:device_code`
+
+**Dashboard UI:** OAuth2 > Clients > Edit > "Allowed Grant Types" checkboxes
+
+### Redirect URI Manager
+
+An interactive list editor for managing allowed redirect URIs per client. Validates URIs on input and prevents duplicates.
+
+**Dashboard UI:** OAuth2 > Clients > Edit > "Redirect URIs" section
+
+```bash
+curl -X PUT http://localhost:8787/api/hydra/clients/{client_id} \
+  -H "Content-Type: application/json" \
+  -d '{
+    "redirect_uris": [
+      "http://localhost:3000/callback",
+      "https://myapp.example.com/auth/callback",
+      "myapp://oauth/callback"
+    ]
+  }'
+```
+
+### Client Secret Rotation
+
+Generate a new client secret while maintaining the same client ID. The old secret is immediately invalidated. The new secret is displayed once and should be copied immediately.
+
+**Dashboard UI:** OAuth2 > Clients > select client > "Rotate Secret" button
+
+**API endpoint:**
+
+```bash
+curl -X POST http://localhost:8787/api/hydra/clients/{client_id}/secret
+```
+
+Response:
+
+```json
+{
+  "client_id": "your-client-id",
+  "client_secret": "new-generated-secret"
+}
+```
+
+### Per-Client Token TTLs
+
+Configure the lifetime of access tokens, refresh tokens, and ID tokens on a per-client basis.
+
+**Dashboard UI:** OAuth2 > Clients > select client > "Token Lifetimes" section
+
+**API endpoint:**
+
+```bash
+curl -X PATCH http://localhost:8787/api/hydra/clients/{client_id}/token-config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "access_token_ttl": 3600,
+    "refresh_token_ttl": 2592000,
+    "id_token_ttl": 3600
+  }'
+```
+
+Values are in seconds. Hydra converts them to duration strings internally.
+
+### Skip Consent Toggle
+
+First-party applications can skip the consent screen entirely. When enabled, the Kratos-Hydra consent bridge auto-approves consent requests for this client.
+
+**Dashboard UI:** OAuth2 > Clients > Edit > "Skip Consent" toggle
+
+Set `skip_consent: true` in the client metadata:
+
+```bash
+curl -X PUT http://localhost:8787/api/hydra/clients/{client_id} \
+  -H "Content-Type: application/json" \
+  -d '{
+    "metadata": { "skip_consent": true }
+  }'
+```
+
+### Scope Restrictions
+
+Limit which scopes a client is allowed to request. If a client requests a scope not in its `allowed_scopes` list, Hydra rejects the authorization request.
+
+**Dashboard UI:** OAuth2 > Clients > Edit > "Allowed Scopes" input
+
+```bash
+curl -X PUT http://localhost:8787/api/hydra/clients/{client_id} \
+  -H "Content-Type: application/json" \
+  -d '{
+    "scope": "openid offline_access profile email"
+  }'
+```
+
+### Audience Management
+
+Configure which audiences (resource servers) a client's tokens are valid for. The `aud` claim in issued tokens will contain these values.
+
+**Dashboard UI:** OAuth2 > Clients > Edit > "Audience" input
+
+```bash
+curl -X PUT http://localhost:8787/api/hydra/clients/{client_id} \
+  -H "Content-Type: application/json" \
+  -d '{
+    "audience": ["https://api.example.com", "https://admin.example.com"]
+  }'
+```
+
+### Dynamic Client Registration (RFC 7591)
+
+Hydra supports the OpenID Connect Dynamic Client Registration protocol. The status and configuration of dynamic registration is displayed in the OIDC Discovery viewer.
+
+**Dashboard UI:** OAuth2 > OIDC Discovery > "Dynamic Client Registration" status field
+
+The registration endpoint (if enabled in Hydra config) allows clients to register themselves programmatically:
+
+```bash
+curl -X POST ${HYDRA_PUBLIC_URL}/connect/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_name": "Dynamic App",
+    "redirect_uris": ["https://example.com/callback"],
+    "grant_types": ["authorization_code"],
+    "response_types": ["code"],
+    "token_endpoint_auth_method": "none"
+  }'
+```
+
+---
+
+## Token Management
+
+### Token Introspection (RFC 7662)
+
+Validate and inspect access tokens. Returns the token's active status, subject, client ID, scope, expiration, and other standard claims.
+
+**Dashboard UI:** OAuth2 > Tokens tab > "Introspect Token" form
+
+**API endpoints:**
+
+```bash
+# Via Truss dashboard API (only returns active for tokens belonging to your clients)
+curl -X POST http://localhost:8787/api/hydra/introspect \
+  -H "Content-Type: application/json" \
+  -d '{ "token": "ory_at_..." }'
+
+# Direct via Hydra Admin API
+curl -X POST ${HYDRA_ADMIN_URL}/admin/oauth2/introspect \
+  -d "token=ACCESS_TOKEN"
+```
+
+Response:
+
+```json
+{
+  "active": true,
+  "sub": "user-uuid",
+  "client_id": "my-client",
+  "scope": "openid offline_access",
+  "exp": 1710000000,
+  "iat": 1709996400,
+  "token_type": "access_token",
+  "token_use": "access_token"
+}
+```
+
+### Token Revocation (RFC 7009)
+
+Revoke an access or refresh token. The token is immediately invalidated.
+
+**Dashboard UI:** OAuth2 > Tokens tab > "Revoke Token" form
+
+**API endpoint:**
+
+```bash
+# Via Truss dashboard API
+curl -X POST http://localhost:8787/api/hydra/revoke \
+  -H "Content-Type: application/json" \
+  -d '{ "token": "ory_at_..." }'
+
+# Direct via Hydra Public API
+curl -X POST ${HYDRA_PUBLIC_URL}/oauth2/revoke \
+  -u "CLIENT_ID:CLIENT_SECRET" \
+  -d "token=TOKEN_TO_REVOKE"
+```
+
+### JWT Access Tokens
+
+By default, Hydra issues opaque access tokens. You can opt in to JWT-formatted access tokens per client by setting the `access_token_strategy` to `jwt`.
+
+**Dashboard UI:** OAuth2 > Clients > select client > Token Config > "Access Token Strategy" toggle
+
+**API endpoint:**
+
+```bash
+curl -X PATCH http://localhost:8787/api/hydra/clients/{client_id}/token-config \
+  -H "Content-Type: application/json" \
+  -d '{ "access_token_strategy": "jwt" }'
+```
+
+JWT access tokens can be verified locally using the JWKS keys without calling the introspection endpoint — useful for high-throughput APIs.
+
+### Flush Inactive Tokens
+
+Admin-only endpoint to clean up expired and inactive tokens from Hydra's database. This is a maintenance operation that affects all OAuth2 clients.
+
+**Dashboard UI:** OAuth2 > Tokens tab > "Flush Inactive Tokens" button (admin only)
+
+**API endpoint:**
+
+```bash
+curl -X POST http://localhost:8787/api/hydra/flush
+```
+
+Flushes all tokens that expired before the current timestamp.
+
+---
+
+## JWK Management
+
+### JWKS Viewer
+
+View all JSON Web Keys used by Hydra for signing tokens. Displays the algorithm, key ID (`kid`), key type, and creation date for each key.
+
+**Dashboard UI:** OAuth2 > JWKS tab
+
+**API endpoints:**
+
+```bash
+# Via Truss dashboard API
+curl http://localhost:8787/api/hydra/jwks
+
+# Direct from Hydra
+curl ${HYDRA_PUBLIC_URL}/.well-known/jwks.json
+```
+
+### Key Creation / Rotation
+
+Create new signing keys in any of 7 supported algorithms. New keys are added to the key set and become available for signing. Rotate keys by creating a new key and then deleting the old one.
+
+**Dashboard UI:** OAuth2 > JWKS tab > "Create Key" button
+
+**Supported algorithms:** RS256, RS384, RS512, ES256, ES384, ES512, EdDSA
+
+**API endpoint:**
+
+```bash
+curl -X POST http://localhost:8787/api/hydra/keys \
+  -H "Content-Type: application/json" \
+  -d '{
+    "set_id": "hydra.openid.id-token",
+    "algorithm": "RS256",
+    "use": "sig"
+  }'
+```
+
+Admin access is required for key management operations.
+
+### Key Deletion
+
+Remove individual keys from key sets. Use this after rotating to a new key and verifying that no active tokens reference the old key.
+
+**Dashboard UI:** OAuth2 > JWKS tab > click key > "Delete" button
+
+**API endpoint:**
+
+```bash
+curl -X DELETE http://localhost:8787/api/hydra/keys/{set_id}/{kid}
+```
+
+---
+
+## Consent / Login Bridge
+
+The Kratos-Hydra consent bridge connects Truss authentication (Kratos) with OAuth2 authorization (Hydra). When a user initiates an OAuth2 flow, Hydra delegates login and consent to Truss, which verifies the user's Kratos session and presents a consent screen.
+
+### Kratos-to-Hydra Login Bridge
+
+When Hydra needs to authenticate a user, it redirects to the Truss login bridge. The bridge checks for an existing Kratos session (via cookie) and either accepts the login automatically or redirects the user to the Kratos login page.
+
+**Bridge endpoint:** `GET /api/hydra/bridge/login?login_challenge=CHALLENGE`
+
+**Flow:**
+
+1. Hydra redirects the user to the bridge with a `login_challenge`
+2. If the user has a Kratos session cookie, the bridge accepts the login and redirects back to Hydra
+3. If no session exists, the bridge redirects to the Kratos login page with a `return_to` URL
+4. After login, the user returns to the bridge, which now finds a session and accepts
+
+**Bridge status check:**
+
+```bash
+curl http://localhost:8787/api/hydra/bridge/status
+```
+
+Response:
+
+```json
+{
+  "hydra_configured": true,
+  "kratos_configured": true,
+  "bridge_ready": true,
+  "login_url": "https://api.example.com/api/hydra/bridge/login",
+  "consent_url": "https://api.example.com/api/hydra/bridge/consent"
+}
+```
+
+### Consent Screen
+
+When the user has not previously granted consent for the requested scopes, Truss displays a standalone consent screen. The screen shows:
+
+- **Client identity** — name, logo, terms of service, privacy policy links
+- **Requested scopes** — checkboxes for each scope (e.g., `openid`, `profile`, `email`, `offline_access`)
+- **Approve / Deny** buttons
+- **Remember toggle** — skip this consent screen for future requests from this client
+
+**Dashboard UI:** The consent screen appears automatically when redirected by the OAuth2 flow. It can also be accessed via OAuth2 > Consent in the dashboard.
+
+**API endpoints:**
+
+```bash
+# Get consent challenge details (for custom consent UI)
+curl "http://localhost:8787/api/hydra/bridge/consent/info?consent_challenge=CHALLENGE"
+
+# Accept consent
+curl -X POST http://localhost:8787/api/hydra/bridge/consent/accept \
+  -H "Content-Type: application/json" \
+  -d '{
+    "challenge": "CONSENT_CHALLENGE",
+    "grant_scope": ["openid", "profile", "email"],
+    "remember": true
+  }'
+
+# Reject consent
+curl -X POST http://localhost:8787/api/hydra/bridge/consent/reject \
+  -H "Content-Type: application/json" \
+  -d '{
+    "challenge": "CONSENT_CHALLENGE",
+    "error": "access_denied",
+    "error_description": "The user denied the request"
+  }'
+```
+
+### Consent Session Listing
+
+Search and view active consent sessions by subject (user ID). Shows which clients the user has granted consent to and which scopes were approved.
+
+**Dashboard UI:** OAuth2 > Consent Sessions tab > search by subject
+
+**API endpoint:**
+
+```bash
+curl http://localhost:8787/api/hydra/consent/{subject}
+```
+
+Returns an array of consent sessions, each containing the client details and granted scopes.
+
+### Consent Session Revocation
+
+Revoke consent for a specific client or all clients for a given subject. After revocation, the user will be prompted for consent again on the next OAuth2 flow.
+
+**Dashboard UI:** OAuth2 > Consent Sessions > select session > "Revoke" button
+
+**API endpoints:**
+
+```bash
+# Revoke consent for a specific client
+curl -X DELETE "http://localhost:8787/api/hydra/consent/{subject}?client={client_id}"
+
+# Revoke all consent for a subject
+curl -X DELETE http://localhost:8787/api/hydra/consent/{subject}
+```
+
+---
+
+## Developer Tools
+
+### JWT Debugger / Decoder
+
+A client-side JWT decoder built into the dashboard. Paste any JWT and see:
+
+- **Header** — algorithm, key ID, type
+- **Payload** — all claims with human-readable timestamps
+- **Expiry detection** — warns if the token is expired
+- **Signature status** — indicates whether the signature can be verified against the JWKS
+
+**Dashboard UI:** OAuth2 > JWT Debugger tab
+
+The decoder runs entirely in the browser — tokens are never sent to the server.
+
+### OAuth2 Flow Tester
+
+An interactive tool that walks you through complete OAuth2 flows step by step. Supports three flow types:
+
+**Auth Code + PKCE:**
+1. Generates a code verifier and challenge
+2. Builds the authorization URL
+3. Opens the authorization endpoint
+4. Captures the callback with the authorization code
+5. Exchanges the code for tokens
+6. Displays the full token response
+
+**Client Credentials:**
+1. Select a confidential client
+2. Enter the client secret and desired scopes
+3. Executes the token request
+4. Displays the access token and metadata
+
+**Device Authorization:**
+1. Select a client
+2. Initiates the device code request
+3. Displays the user code and verification URI
+4. Polls for authorization completion
+5. Displays the final token response
+
+**Dashboard UI:** OAuth2 > Flow Tester tab
+
+### SDK Snippets
+
+Copy-paste integration code for common OAuth2 operations. Available in multiple languages.
+
+**Dashboard UI:** OAuth2 > SDK Snippets tab
+
+### OIDC Discovery Viewer
+
+A formatted viewer for the OIDC discovery document. Displays:
+
+- All endpoints as clickable links
+- Supported grant types, response types, and signing algorithms
+- Subject types and claim types
+- Raw JSON with copy-to-clipboard
+
+**Dashboard UI:** OAuth2 > Overview > Discovery section
+
+---
+
+## Client API
+
+OAuth2 features are available via the Truss Client API (requires API key):
+
+```bash
+# List clients (requires service_role key)
+curl http://localhost:8787/v1/oauth2/clients \
+  -H "apikey: truss_sk_your_key"
+
+# Create a client
+curl -X POST http://localhost:8787/v1/oauth2/clients \
+  -H "apikey: truss_sk_your_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_name": "My App",
+    "grant_types": ["authorization_code"],
+    "redirect_uris": ["http://localhost:3000/callback"]
+  }'
+
+# Delete a client
+curl -X DELETE http://localhost:8787/v1/oauth2/clients/{client_id} \
+  -H "apikey: truss_sk_your_key"
+
+# OIDC discovery (any API key)
+curl http://localhost:8787/v1/oauth2/discovery \
+  -H "apikey: truss_sk_your_key"
+```
+
+---
+
+## Dashboard
+
+The **OAuth2** view in the dashboard provides:
+- **Overview** — client count, discovery info, grant type stats, bridge status
+- **Clients** — create, view, edit, and delete OAuth2 clients with full configuration
+- **Tokens** — introspect, revoke, and flush tokens
+- **JWKS** — view, create, rotate, and delete signing keys
+- **Consent** — consent session browser with search and revocation
+- **Flow Tester** — interactive OAuth2 flow walkthrough (Auth Code + PKCE, Client Credentials, Device Auth)
+- **JWT Debugger** — client-side token decoder
+- **SDK Snippets** — copy-paste integration code
+
+---
+
+## SDK / Code Examples
+
+<Tabs>
+  <TabItem label="JavaScript">
+```javascript
+// Authorization Code Flow with PKCE
+function generatePKCE() {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  const verifier = btoa(String.fromCharCode(...array))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))
+    .then(hash => ({
+      verifier,
+      challenge: btoa(String.fromCharCode(...new Uint8Array(hash)))
+        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""),
+    }));
+}
+
+// Step 1: Start the flow
+const { verifier, challenge } = await generatePKCE();
+sessionStorage.setItem("pkce_verifier", verifier);
+
+const params = new URLSearchParams({
+  client_id: "YOUR_CLIENT_ID",
+  response_type: "code",
+  redirect_uri: "http://localhost:3000/callback",
+  scope: "openid offline_access profile email",
+  code_challenge: challenge,
+  code_challenge_method: "S256",
+  state: crypto.randomUUID(),
+});
+window.location.href = `${HYDRA_PUBLIC_URL}/oauth2/auth?${params}`;
+
+// Step 2: Exchange code for tokens (on callback page)
+const code = new URLSearchParams(window.location.search).get("code");
+const tokens = await fetch(`${HYDRA_PUBLIC_URL}/oauth2/token`, {
+  method: "POST",
+  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  body: new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: "http://localhost:3000/callback",
+    client_id: "YOUR_CLIENT_ID",
+    code_verifier: sessionStorage.getItem("pkce_verifier"),
+  }),
+}).then(r => r.json());
+
+console.log(tokens.access_token, tokens.id_token, tokens.refresh_token);
+```
+  </TabItem>
+  <TabItem label="Client Credentials (JS)">
+```javascript
+// Machine-to-machine (service accounts)
+const tokens = await fetch(`${HYDRA_PUBLIC_URL}/oauth2/token`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/x-www-form-urlencoded",
+    Authorization: "Basic " + btoa("CLIENT_ID:CLIENT_SECRET"),
+  },
+  body: "grant_type=client_credentials&scope=openid",
+}).then(r => r.json());
+
+console.log(tokens.access_token);
+
+// Refresh a token
+const refreshed = await fetch(`${HYDRA_PUBLIC_URL}/oauth2/token`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/x-www-form-urlencoded",
+    Authorization: "Basic " + btoa("CLIENT_ID:CLIENT_SECRET"),
+  },
+  body: new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: tokens.refresh_token,
+  }),
+}).then(r => r.json());
+
+// Introspect a token
+const info = await fetch("http://localhost:8787/api/hydra/introspect", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  credentials: "include",
+  body: JSON.stringify({ token: tokens.access_token }),
+}).then(r => r.json());
+
+console.log(info.active, info.sub, info.exp);
+```
+  </TabItem>
+  <TabItem label="Python">
+```python
+import requests
+import hashlib
+import base64
+import secrets
+
+# --- Auth Code + PKCE ---
+verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
+challenge = base64.urlsafe_b64encode(
+    hashlib.sha256(verifier.encode()).digest()
+).rstrip(b"=").decode()
+
+# Build authorization URL (redirect user here)
+auth_url = (
+    f"{HYDRA_PUBLIC_URL}/oauth2/auth?"
+    f"client_id=YOUR_CLIENT_ID&response_type=code&"
+    f"redirect_uri=http://localhost:3000/callback&"
+    f"scope=openid+offline_access&"
+    f"code_challenge={challenge}&code_challenge_method=S256"
+)
+
+# Exchange code for tokens
+tokens = requests.post(f"{HYDRA_PUBLIC_URL}/oauth2/token", data={
+    "grant_type": "authorization_code",
+    "code": "AUTH_CODE_FROM_CALLBACK",
+    "redirect_uri": "http://localhost:3000/callback",
+    "client_id": "YOUR_CLIENT_ID",
+    "code_verifier": verifier,
+}).json()
+
+# --- Client Credentials ---
+tokens = requests.post(
+    f"{HYDRA_PUBLIC_URL}/oauth2/token",
+    auth=("CLIENT_ID", "CLIENT_SECRET"),
+    data={"grant_type": "client_credentials", "scope": "openid"},
+).json()
+
+# --- Introspect ---
+info = requests.post(
+    f"{HYDRA_ADMIN_URL}/admin/oauth2/introspect",
+    data={"token": tokens["access_token"]},
+).json()
+print(info["active"], info["sub"])
+```
+  </TabItem>
+  <TabItem label="Go">
+```go
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+)
+
+// Client Credentials Grant
+func getClientCredentialsToken(hydraURL, clientID, clientSecret string) (map[string]interface{}, error) {
+	data := url.Values{
+		"grant_type": {"client_credentials"},
+		"scope":      {"openid"},
+	}
+	req, _ := http.NewRequest("POST", hydraURL+"/oauth2/token", strings.NewReader(data.Encode()))
+	req.SetBasicAuth(clientID, clientSecret)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	return result, nil
+}
+
+// Token Introspection
+func introspectToken(hydraAdminURL, token string) (map[string]interface{}, error) {
+	data := url.Values{"token": {token}}
+	resp, err := http.Post(
+		hydraAdminURL+"/admin/oauth2/introspect",
+		"application/x-www-form-urlencoded",
+		strings.NewReader(data.Encode()),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	return result, nil
+}
+
+func main() {
+	tokens, _ := getClientCredentialsToken(
+		"http://localhost:4444", "my-client-id", "my-client-secret",
+	)
+	fmt.Println("Access Token:", tokens["access_token"])
+
+	info, _ := introspectToken("http://localhost:4445", tokens["access_token"].(string))
+	fmt.Println("Active:", info["active"], "Subject:", info["sub"])
+}
+```
+  </TabItem>
+  <TabItem label="cURL">
+```bash
+# ── Auth Code + PKCE ──
+# Generate PKCE values
+CODE_VERIFIER=$(openssl rand -base64 32 | tr -d '=+/' | head -c 43)
+CODE_CHALLENGE=$(echo -n "$CODE_VERIFIER" | openssl dgst -sha256 -binary | base64 | tr -d '=' | tr '+/' '-_')
+
+# Build auth URL (open in browser)
+echo "${HYDRA_PUBLIC_URL}/oauth2/auth?\
+client_id=YOUR_CLIENT_ID&response_type=code&\
+redirect_uri=http://localhost:3000/callback&\
+scope=openid+offline_access&\
+code_challenge=${CODE_CHALLENGE}&code_challenge_method=S256"
+
+# Exchange code for tokens
+curl -X POST ${HYDRA_PUBLIC_URL}/oauth2/token \
+  -d "grant_type=authorization_code" \
+  -d "code=AUTH_CODE" \
+  -d "redirect_uri=http://localhost:3000/callback" \
+  -d "client_id=YOUR_CLIENT_ID" \
+  -d "code_verifier=${CODE_VERIFIER}"
+
+# ── Client Credentials ──
+curl -X POST ${HYDRA_PUBLIC_URL}/oauth2/token \
+  -u "CLIENT_ID:CLIENT_SECRET" \
+  -d "grant_type=client_credentials" \
+  -d "scope=openid"
+
+# ── Refresh Token ──
+curl -X POST ${HYDRA_PUBLIC_URL}/oauth2/token \
+  -u "CLIENT_ID:CLIENT_SECRET" \
+  -d "grant_type=refresh_token" \
+  -d "refresh_token=REFRESH_TOKEN"
+
+# ── Device Authorization ──
+curl -X POST ${HYDRA_PUBLIC_URL}/oauth2/device/auth \
+  -d "client_id=YOUR_CLIENT_ID" \
+  -d "scope=openid offline_access"
+# Then poll:
+curl -X POST ${HYDRA_PUBLIC_URL}/oauth2/token \
+  -d "grant_type=urn:ietf:params:oauth:grant-type:device_code" \
+  -d "device_code=DEVICE_CODE" \
+  -d "client_id=YOUR_CLIENT_ID"
+
+# ── Introspect ──
+curl -X POST ${HYDRA_ADMIN_URL}/admin/oauth2/introspect \
+  -d "token=ACCESS_TOKEN"
+
+# ── Revoke ──
+curl -X POST ${HYDRA_PUBLIC_URL}/oauth2/revoke \
+  -u "CLIENT_ID:CLIENT_SECRET" \
+  -d "token=TOKEN_TO_REVOKE"
+
+# ── JWKS ──
+curl ${HYDRA_PUBLIC_URL}/.well-known/jwks.json
+
+# ── OIDC Discovery ──
+curl ${HYDRA_PUBLIC_URL}/.well-known/openid-configuration
+
+# ── Consent Sessions ──
+curl http://localhost:8787/api/hydra/consent/USER_UUID
+
+# ── RP-Initiated Logout ──
+curl -X POST http://localhost:8787/api/hydra/logout \
+  -H "Content-Type: application/json" \
+  -d '{"subject": "USER_UUID"}'
+```
+  </TabItem>
+</Tabs>
+
+---
+
+## API Endpoint Reference
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/hydra/health` | GET | None | Health check |
+| `/api/hydra/discovery` | GET | None | OIDC discovery document |
+| `/api/hydra/jwks` | GET | None | Public JWKS |
+| `/api/hydra/clients` | GET | Session | List clients |
+| `/api/hydra/clients/:id` | GET | Session | Get client details |
+| `/api/hydra/clients` | POST | Session | Create client |
+| `/api/hydra/clients/:id` | PUT | Session | Update client |
+| `/api/hydra/clients/:id` | DELETE | Session | Delete client |
+| `/api/hydra/clients/:id/secret` | POST | Session | Rotate client secret |
+| `/api/hydra/clients/:id/token-config` | PATCH | Session | Update token TTLs, strategy, logout URIs |
+| `/api/hydra/introspect` | POST | Session | Introspect token |
+| `/api/hydra/revoke` | POST | Session | Revoke token |
+| `/api/hydra/flush` | POST | Admin | Flush expired tokens |
+| `/api/hydra/keys` | POST | Admin | Create JWK |
+| `/api/hydra/keys/:set/:kid` | DELETE | Admin | Delete JWK |
+| `/api/hydra/consent/:subject` | GET | Session | List consent sessions |
+| `/api/hydra/consent/:subject` | DELETE | Session | Revoke consent sessions |
+| `/api/hydra/claims-config` | GET | Session | Get custom claims config |
+| `/api/hydra/claims-config` | PUT | Session | Update custom claims config |
+| `/api/hydra/logout` | POST | Session | RP-Initiated logout |
+| `/api/hydra/bridge/login` | GET | None | Login bridge (Hydra redirect target) |
+| `/api/hydra/bridge/consent` | GET | None | Consent bridge (Hydra redirect target) |
+| `/api/hydra/bridge/consent/info` | GET | None | Get consent challenge details |
+| `/api/hydra/bridge/consent/accept` | POST | None | Accept consent |
+| `/api/hydra/bridge/consent/reject` | POST | None | Reject consent |
+| `/api/hydra/bridge/status` | GET | None | Bridge configuration status |
+| `/v1/oauth2/clients` | GET | API Key (service_role) | List clients |
+| `/v1/oauth2/clients` | POST | API Key (service_role) | Create client |
+| `/v1/oauth2/clients/:id` | DELETE | API Key (service_role) | Delete client |
+| `/v1/oauth2/discovery` | GET | API Key | OIDC discovery |

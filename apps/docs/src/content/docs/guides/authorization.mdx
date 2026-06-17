@@ -1,0 +1,908 @@
+---
+title: Authorization
+description: Fine-grained permissions with relation-based access control (ReBAC), RBAC, and ACL.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Truss provides relation-based access control (ReBAC) powered by Ory Keto. This lets you define who can do what to which resource using relation tuples — a flexible model that handles RBAC, ReBAC, and ACL patterns. The dashboard includes a permission checker playground, role matrix, relationship graph, OPL editor with version history, and model templates.
+
+## Setup
+
+```env
+KETO_READ_URL=http://localhost:4466
+KETO_WRITE_URL=http://localhost:4467
+KETO_ADMIN_TOKEN=your-admin-token
+```
+
+---
+
+## Concepts
+
+Authorization in Truss is based on **relation tuples**:
+
+```
+namespace:object#relation@subject
+```
+
+For example:
+- `Organization:acme#member@user123` — user123 is a member of Acme org
+- `Project:website#editor@user456` — user456 can edit the website project
+- `Project:website#viewer@Organization:acme#member` — all Acme members can view the website
+
+### Namespaces
+
+Namespaces define the types of resources in your system. Each namespace has its own set of relations and permissions.
+
+Truss ships with three default namespaces:
+- **User** — individual users
+- **Organization** — groups with members and admins
+- **Project** — resources with owners, editors, and viewers
+
+You can define custom namespaces using the OPL (Ory Permission Language) editor in the dashboard.
+
+---
+
+## Core Permission Engine
+
+### Relationship Tuple CRUD
+
+Create, list, and delete relation tuples. Tuples are the fundamental building blocks of your permission model.
+
+**Dashboard:** Authorization > Permissions tab
+
+**API Endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/keto/relation-tuples` | List tuples with filters |
+| `PUT` | `/api/keto/relation-tuples` | Create a relation tuple |
+| `DELETE` | `/api/keto/relation-tuples` | Delete a relation tuple |
+
+<Tabs>
+  <TabItem label="JavaScript">
+```javascript
+const TRUSS_URL = "http://localhost:8787";
+
+// Create a relation tuple (grant access)
+await fetch(`${TRUSS_URL}/api/keto/relation-tuples`, {
+  method: "PUT",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    namespace: "Project",
+    object: "my-project",
+    relation: "editor",
+    subject_id: "user-123",
+  }),
+});
+
+// List tuples for a resource
+const tuples = await fetch(
+  `${TRUSS_URL}/api/keto/relation-tuples?namespace=Project&object=my-project`,
+  { credentials: "include" }
+).then(r => r.json());
+// { relation_tuples: [...], next_page_token: "..." }
+
+// Delete a relation tuple (revoke access)
+await fetch(
+  `${TRUSS_URL}/api/keto/relation-tuples?namespace=Project&object=my-project&relation=editor&subject_id=user-123`,
+  { method: "DELETE", credentials: "include" }
+);
+```
+  </TabItem>
+  <TabItem label="Python">
+```python
+import requests
+
+TRUSS_URL = "http://localhost:8787"
+cookies = {"truss_session": "your-session-token"}
+
+# Create a relation tuple
+requests.put(f"{TRUSS_URL}/api/keto/relation-tuples", cookies=cookies, json={
+    "namespace": "Project",
+    "object": "my-project",
+    "relation": "editor",
+    "subject_id": "user-123",
+})
+
+# List tuples for a resource
+tuples = requests.get(
+    f"{TRUSS_URL}/api/keto/relation-tuples",
+    cookies=cookies,
+    params={"namespace": "Project", "object": "my-project"}
+).json()
+
+# Delete a relation tuple
+requests.delete(
+    f"{TRUSS_URL}/api/keto/relation-tuples",
+    cookies=cookies,
+    params={"namespace": "Project", "object": "my-project", "relation": "editor", "subject_id": "user-123"}
+)
+```
+  </TabItem>
+  <TabItem label="Go">
+```go
+package main
+
+import (
+    "bytes"
+    "encoding/json"
+    "net/http"
+)
+
+const trussURL = "http://localhost:8787"
+
+// Create a relation tuple
+func createTuple(namespace, object, relation, subjectID string) error {
+    body, _ := json.Marshal(map[string]string{
+        "namespace":  namespace,
+        "object":     object,
+        "relation":   relation,
+        "subject_id": subjectID,
+    })
+    req, _ := http.NewRequest("PUT", trussURL+"/api/keto/relation-tuples",
+        bytes.NewReader(body))
+    req.Header.Set("Content-Type", "application/json")
+    _, err := http.DefaultClient.Do(req)
+    return err
+}
+
+// Delete a relation tuple
+func deleteTuple(namespace, object, relation, subjectID string) error {
+    req, _ := http.NewRequest("DELETE",
+        trussURL+"/api/keto/relation-tuples?namespace="+namespace+
+            "&object="+object+"&relation="+relation+"&subject_id="+subjectID,
+        nil)
+    _, err := http.DefaultClient.Do(req)
+    return err
+}
+```
+  </TabItem>
+  <TabItem label="cURL">
+```bash
+# Create a relation tuple
+curl -X PUT http://localhost:8787/api/keto/relation-tuples \
+  -H "Content-Type: application/json" \
+  -H "Cookie: truss_session=your-session-token" \
+  -d '{"namespace":"Project","object":"my-project","relation":"editor","subject_id":"user-123"}'
+
+# List tuples
+curl "http://localhost:8787/api/keto/relation-tuples?namespace=Project&object=my-project" \
+  -H "Cookie: truss_session=your-session-token"
+
+# Delete a relation tuple
+curl -X DELETE "http://localhost:8787/api/keto/relation-tuples?namespace=Project&object=my-project&relation=editor&subject_id=user-123" \
+  -H "Cookie: truss_session=your-session-token"
+```
+  </TabItem>
+</Tabs>
+
+**Query parameters for listing tuples:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `namespace` | Filter by namespace |
+| `object` | Filter by object ID |
+| `relation` | Filter by relation name |
+| `subject_id` | Filter by subject ID |
+| `subject_set.namespace` | Filter by subject set namespace |
+| `subject_set.object` | Filter by subject set object |
+| `subject_set.relation` | Filter by subject set relation |
+| `page_token` | Cursor for pagination |
+| `page_size` | Number of tuples per page |
+
+### Permission Check
+
+Answer the question: "Is user X allowed to do Y on resource Z?" The check evaluates both direct tuples and indirect permissions through subject sets.
+
+**Dashboard:** Authorization > Permissions tab > Check panel
+
+**API Endpoint:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/keto/check` | Check a single permission |
+
+Every permission check is logged to the audit trail.
+
+<Tabs>
+  <TabItem label="JavaScript">
+```javascript
+// Check if a user has permission
+const res = await fetch(`${TRUSS_URL}/api/keto/check`, {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    namespace: "Project",
+    object: "my-project",
+    relation: "editor",
+    subject_id: "user-123",
+  }),
+});
+const { allowed } = await res.json();
+// allowed: true | false
+
+// Check with a subject set (group membership)
+const groupCheck = await fetch(`${TRUSS_URL}/api/keto/check`, {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    namespace: "Project",
+    object: "my-project",
+    relation: "viewer",
+    subject_set: {
+      namespace: "Organization",
+      object: "acme",
+      relation: "member",
+    },
+  }),
+}).then(r => r.json());
+```
+  </TabItem>
+  <TabItem label="Python">
+```python
+# Check permission
+res = requests.post(f"{TRUSS_URL}/api/keto/check", cookies=cookies, json={
+    "namespace": "Project",
+    "object": "my-project",
+    "relation": "editor",
+    "subject_id": "user-123",
+})
+allowed = res.json()["allowed"]  # True | False
+```
+  </TabItem>
+  <TabItem label="cURL">
+```bash
+curl -X POST http://localhost:8787/api/keto/check \
+  -H "Content-Type: application/json" \
+  -H "Cookie: truss_session=your-session-token" \
+  -d '{"namespace":"Project","object":"my-project","relation":"editor","subject_id":"user-123"}'
+# {"allowed": true}
+```
+  </TabItem>
+</Tabs>
+
+### Permission Expand (Access Tree)
+
+Show the full access tree for a permission, including union, intersection, and leaf nodes. This answers "why is this allowed?" by revealing the entire permission evaluation path.
+
+**Dashboard:** Authorization > Permissions tab > Expand panel (tree visualization)
+
+**API Endpoint:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/keto/expand` | Expand a permission tree |
+
+**Query parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `namespace` | The namespace to expand |
+| `object` | The object to expand |
+| `relation` | The relation to expand |
+| `max-depth` | Maximum tree depth (default: 5) |
+
+<Tabs>
+  <TabItem label="JavaScript">
+```javascript
+// Expand permission tree
+const tree = await fetch(
+  `${TRUSS_URL}/api/keto/expand?namespace=Project&object=my-project&relation=view&max-depth=5`,
+  { credentials: "include" }
+).then(r => r.json());
+
+// Response structure:
+// {
+//   "type": "union",
+//   "subject_set": { "namespace": "Project", "object": "my-project", "relation": "view" },
+//   "children": [
+//     { "type": "leaf", "subject_id": "user-123" },
+//     {
+//       "type": "union",
+//       "subject_set": { "namespace": "Organization", "object": "acme", "relation": "member" },
+//       "children": [
+//         { "type": "leaf", "subject_id": "user-456" },
+//         { "type": "leaf", "subject_id": "user-789" }
+//       ]
+//     }
+//   ]
+// }
+```
+  </TabItem>
+  <TabItem label="cURL">
+```bash
+curl "http://localhost:8787/api/keto/expand?namespace=Project&object=my-project&relation=view&max-depth=5" \
+  -H "Cookie: truss_session=your-session-token"
+```
+  </TabItem>
+</Tabs>
+
+### Reverse Lookup
+
+Answer the question: "Who can access resource X?" Returns all subjects with access to a given object, their relations, and a permission matrix.
+
+**Dashboard:** Authorization > Permissions tab > "Who can access?" panel
+
+**API Endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/keto/who-can-access` | Get all subjects with access to an object |
+| `GET` | `/api/keto/subject-tuples/:subjectId` | Get all tuples where a subject has access |
+
+<Tabs>
+  <TabItem label="JavaScript">
+```javascript
+// Who can access this object?
+const access = await fetch(`${TRUSS_URL}/api/keto/who-can-access`, {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    namespace: "Project",
+    object: "my-project",
+  }),
+}).then(r => r.json());
+// Returns subjects, their relations, and a permission matrix
+
+// What can this subject access?
+const tuples = await fetch(
+  `${TRUSS_URL}/api/keto/subject-tuples/user-123`,
+  { credentials: "include" }
+).then(r => r.json());
+// Returns all tuples where user-123 is the subject, across all namespaces
+```
+  </TabItem>
+  <TabItem label="Python">
+```python
+# Who can access?
+access = requests.post(f"{TRUSS_URL}/api/keto/who-can-access", cookies=cookies, json={
+    "namespace": "Project",
+    "object": "my-project",
+}).json()
+
+# What can this user access?
+tuples = requests.get(
+    f"{TRUSS_URL}/api/keto/subject-tuples/user-123", cookies=cookies
+).json()
+```
+  </TabItem>
+  <TabItem label="cURL">
+```bash
+# Who can access this object?
+curl -X POST http://localhost:8787/api/keto/who-can-access \
+  -H "Content-Type: application/json" \
+  -H "Cookie: truss_session=your-session-token" \
+  -d '{"namespace":"Project","object":"my-project"}'
+
+# What can this subject access?
+curl http://localhost:8787/api/keto/subject-tuples/user-123 \
+  -H "Cookie: truss_session=your-session-token"
+```
+  </TabItem>
+</Tabs>
+
+### Batch Tuple Operations
+
+Bulk create or delete tuples in a single API call. Useful for provisioning access for new teams or cleaning up permissions.
+
+**Dashboard:** Authorization > Permissions tab > Import/Export buttons
+
+**API Endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/keto/relation-tuples/import` | Bulk import tuples (up to 500) |
+| `POST` | `/api/keto/relation-tuples/batch-delete` | Bulk delete tuples |
+
+<Tabs>
+  <TabItem label="JavaScript">
+```javascript
+// Bulk import tuples
+await fetch(`${TRUSS_URL}/api/keto/relation-tuples/import`, {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    tuples: [
+      { namespace: "Project", object: "website", relation: "viewer", subject_id: "user-1" },
+      { namespace: "Project", object: "website", relation: "viewer", subject_id: "user-2" },
+      { namespace: "Project", object: "website", relation: "editor", subject_id: "user-3" },
+    ],
+  }),
+});
+
+// Bulk delete tuples
+await fetch(`${TRUSS_URL}/api/keto/relation-tuples/batch-delete`, {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    tuples: [
+      { namespace: "Project", object: "website", relation: "viewer", subject_id: "user-1" },
+      { namespace: "Project", object: "website", relation: "viewer", subject_id: "user-2" },
+    ],
+  }),
+});
+```
+  </TabItem>
+  <TabItem label="cURL">
+```bash
+# Bulk import tuples (up to 500)
+curl -X POST http://localhost:8787/api/keto/relation-tuples/import \
+  -H "Content-Type: application/json" \
+  -H "Cookie: truss_session=your-session-token" \
+  -d '{
+    "tuples": [
+      {"namespace":"Project","object":"website","relation":"viewer","subject_id":"user-1"},
+      {"namespace":"Project","object":"website","relation":"viewer","subject_id":"user-2"}
+    ]
+  }'
+
+# Bulk delete tuples
+curl -X POST http://localhost:8787/api/keto/relation-tuples/batch-delete \
+  -H "Content-Type: application/json" \
+  -H "Cookie: truss_session=your-session-token" \
+  -d '{"tuples":[...]}'
+```
+  </TabItem>
+</Tabs>
+
+### Tuple Import / Export
+
+Download all tuples as JSON for backup or migration, or upload a JSON file to restore them.
+
+**Dashboard:** Authorization > Permissions tab > Import / Export buttons
+
+Export returns all relation tuples as a JSON array. Import accepts the same format and creates all tuples.
+
+```bash
+# Export tuples (download all as JSON)
+curl "http://localhost:8787/api/keto/relation-tuples?page_size=1000" \
+  -H "Cookie: truss_session=your-session-token" \
+  -o tuples.json
+
+# Import tuples (upload JSON)
+curl -X POST http://localhost:8787/api/keto/relation-tuples/import \
+  -H "Content-Type: application/json" \
+  -H "Cookie: truss_session=your-session-token" \
+  -d @tuples.json
+```
+
+### Namespace Listing
+
+Browse all namespaces defined in your permission model.
+
+**Dashboard:** Authorization > Namespaces tab
+
+**API Endpoint:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/keto/namespaces` | List all namespaces |
+
+```bash
+curl http://localhost:8787/api/keto/namespaces \
+  -H "Cookie: truss_session=your-session-token"
+# { "namespaces": [{ "name": "User" }, { "name": "Organization" }, { "name": "Project" }] }
+```
+
+---
+
+## Access Control Models
+
+Truss supports three access control models, all built on the same relation tuple foundation.
+
+### RBAC (Role-Based Access Control)
+
+Define roles (admin, editor, viewer) and assign users to roles. The dashboard provides a visual role matrix grid where you can see all users and their roles at a glance.
+
+**Dashboard:** Authorization > Roles tab
+
+The role matrix shows:
+- Rows: Users (populated from Kratos identity list via user picker)
+- Columns: Roles defined in your namespace
+- Cells: Click to assign/unassign a role
+
+**Assigning a role is creating a tuple:**
+
+```bash
+# Assign "admin" role to user-123 in Organization:acme
+curl -X PUT http://localhost:8787/api/keto/relation-tuples \
+  -H "Content-Type: application/json" \
+  -H "Cookie: truss_session=your-session-token" \
+  -d '{
+    "namespace": "Organization",
+    "object": "acme",
+    "relation": "admin",
+    "subject_id": "user-123"
+  }'
+```
+
+**Example RBAC OPL model:**
+
+```typescript
+class Organization implements Namespace {
+  related: {
+    admins: User[]
+    members: User[]
+    viewers: User[]
+  }
+
+  permits = {
+    manage: (ctx: Context) => this.related.admins.includes(ctx.subject),
+    edit: (ctx: Context) => this.permits.manage(ctx) || this.related.members.includes(ctx.subject),
+    view: (ctx: Context) => this.permits.edit(ctx) || this.related.viewers.includes(ctx.subject),
+  }
+}
+```
+
+### ReBAC (Relationship-Based Access Control)
+
+The core Keto model. Permissions are derived from relationships between entities. A user's access is determined by traversing the relationship graph.
+
+**Key concept: Subject sets.** Instead of granting access to individual users, you can grant access to an entire group:
+
+```json
+{
+  "namespace": "Project",
+  "object": "website",
+  "relation": "viewer",
+  "subject_set": {
+    "namespace": "Organization",
+    "object": "acme",
+    "relation": "member"
+  }
+}
+```
+
+This means: anyone who is a `member` of `Organization:acme` is automatically a `viewer` of `Project:website`. When you add a new member to the organization, they immediately gain access to the project — no additional tuples needed.
+
+**ReBAC supports:**
+- Hierarchical permissions (admin implies editor implies viewer)
+- Group-based access (organization members, team members)
+- Resource inheritance (folder permissions cascade to files)
+- Cross-namespace relationships
+
+### ACL (Access Control Lists)
+
+Direct tuple assignments for simple access control. Each tuple is a direct grant of a specific permission to a specific user on a specific resource.
+
+```bash
+# Direct ACL: user-123 can view document-456
+curl -X PUT http://localhost:8787/api/keto/relation-tuples \
+  -H "Content-Type: application/json" \
+  -H "Cookie: truss_session=your-session-token" \
+  -d '{
+    "namespace": "Document",
+    "object": "document-456",
+    "relation": "viewer",
+    "subject_id": "user-123"
+  }'
+
+# Direct ACL: user-456 can edit document-456
+curl -X PUT http://localhost:8787/api/keto/relation-tuples \
+  -H "Content-Type: application/json" \
+  -H "Cookie: truss_session=your-session-token" \
+  -d '{
+    "namespace": "Document",
+    "object": "document-456",
+    "relation": "editor",
+    "subject_id": "user-456"
+  }'
+```
+
+ACLs are the simplest model — every permission is an explicit tuple. They work well for small-scale systems but can become unwieldy as user and resource counts grow. Consider RBAC or ReBAC for larger systems.
+
+---
+
+## Dashboard & Tools
+
+### Permission Checker Playground
+
+Interactive tool for testing permissions. Enter a namespace, object, relation, and subject, then check if the permission is allowed. The playground also supports expanding the access tree to visualize why a permission is granted or denied.
+
+**Dashboard:** Authorization > Permissions tab > Check panel
+
+The playground provides:
+- **Check mode** — "Is this allowed?" returns true/false
+- **Expand mode** — Shows the full access tree (union/intersection/leaf nodes) as a visual tree
+- **History** — Recent checks are displayed for quick re-testing
+
+### Role Management UI
+
+Visual matrix grid for managing role assignments. Select users from a Kratos-integrated user picker and assign them to roles with a single click.
+
+**Dashboard:** Authorization > Roles tab
+
+Features:
+- User picker with search (connected to Kratos identity list)
+- Role assignment modal with namespace and relation selection
+- Visual matrix showing all users and their roles per namespace/object
+- Bulk assign/unassign via checkbox selection
+
+### Namespace Browser
+
+List and explore all namespaces in your permission model. Each namespace shows its relations and the OPL definition.
+
+**Dashboard:** Authorization > Namespaces tab
+
+The browser displays:
+- Namespace name
+- Defined relations
+- OPL reference (if available)
+- Tuple count per namespace
+
+### Relationship Graph
+
+Interactive ReactFlow visualization of the relationship graph. Nodes represent subjects and objects, edges represent relations. Drag nodes to explore the permission topology.
+
+**Dashboard:** Authorization > Permissions tab > Graph view
+
+The graph shows:
+- Subject nodes (users, groups) connected to object nodes (resources)
+- Edge labels showing the relation type
+- Color-coded edges for different relation types
+- Zoom, pan, and drag interactions
+
+### OPL Editor
+
+Full-featured Monaco editor for writing Ory Permission Language (OPL) definitions. Includes TypeScript syntax highlighting and Keto API validation.
+
+**Dashboard:** Authorization > Namespaces tab > Edit OPL
+
+The editor provides:
+- Monaco editor with TypeScript syntax highlighting
+- Real-time syntax validation
+- Save to Keto API
+- Version history integration (save snapshots, restore previous versions)
+
+**Example OPL:**
+
+```typescript
+class User implements Namespace {}
+
+class Organization implements Namespace {
+  related: {
+    admins: User[]
+    members: User[]
+  }
+
+  permits = {
+    manage: (ctx: Context) => this.related.admins.includes(ctx.subject),
+    view: (ctx: Context) =>
+      this.permits.manage(ctx) ||
+      this.related.members.includes(ctx.subject),
+  }
+}
+
+class Project implements Namespace {
+  related: {
+    owners: User[]
+    editors: User[]
+    viewers: (User | Organization["members"])[]
+    parent: Organization[]
+  }
+
+  permits = {
+    delete: (ctx: Context) => this.related.owners.includes(ctx.subject),
+    edit: (ctx: Context) =>
+      this.permits.delete(ctx) ||
+      this.related.editors.includes(ctx.subject),
+    view: (ctx: Context) =>
+      this.permits.edit(ctx) ||
+      this.related.viewers.includes(ctx.subject) ||
+      this.related.parent.traverse((org) => org.permits.view(ctx)),
+  }
+}
+```
+
+### OPL Version History
+
+Save snapshots of your OPL definitions, restore previous versions, and view line-level diffs between versions.
+
+**Dashboard:** Authorization > Namespaces tab > Version History
+
+**API Endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/keto/opl-versions` | List saved OPL snapshots |
+| `POST` | `/api/keto/opl-versions` | Save a new OPL snapshot |
+
+<Tabs>
+  <TabItem label="JavaScript">
+```javascript
+// List OPL versions
+const versions = await fetch(
+  `${TRUSS_URL}/api/keto/opl-versions?name=default&limit=50`,
+  { credentials: "include" }
+).then(r => r.json());
+// { versions: [{ id, name, content, created_by, created_at }], total: 12 }
+
+// Save a new version
+await fetch(`${TRUSS_URL}/api/keto/opl-versions`, {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    name: "default",
+    content: "class User implements Namespace {}\n\nclass Project implements Namespace {\n  ...\n}",
+  }),
+});
+```
+  </TabItem>
+  <TabItem label="cURL">
+```bash
+# List OPL versions
+curl "http://localhost:8787/api/keto/opl-versions?name=default&limit=50" \
+  -H "Cookie: truss_session=your-session-token"
+
+# Save a new OPL version
+curl -X POST http://localhost:8787/api/keto/opl-versions \
+  -H "Content-Type: application/json" \
+  -H "Cookie: truss_session=your-session-token" \
+  -d '{
+    "name": "default",
+    "content": "class User implements Namespace {}\n..."
+  }'
+```
+  </TabItem>
+</Tabs>
+
+**Query parameters for listing versions:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `name` | OPL definition name (default: "default") |
+| `limit` | Max versions to return (default: 50, max: 200) |
+| `offset` | Pagination offset |
+
+### Model Templates
+
+Pre-built OPL patterns you can load into the editor as a starting point. Available templates:
+
+| Template | Description |
+|----------|-------------|
+| **RBAC** | Classic role hierarchy (admin > editor > viewer) with organization and project namespaces |
+| **Multi-Tenant** | Organization-scoped resources with team-level access, nested departments |
+| **Google Docs Sharing** | Document sharing model with owner, writer, commenter, reader roles and link sharing |
+
+**Dashboard:** Authorization > Namespaces tab > Templates dropdown
+
+Each template can be loaded into the OPL editor, customized, and saved.
+
+### Permission Check Audit Trail
+
+Every permission check performed through the API is logged to the audit trail. This provides a complete record of who checked what permission and the result.
+
+**Dashboard:** Authorization > Audit section (within the main audit log, filtered by `keto.permission.check` action)
+
+Each audit entry includes:
+- Timestamp
+- Actor (subject ID)
+- Resource (`namespace:object#relation`)
+- Metadata (subject ID, subject set, allowed result)
+
+```bash
+# Query permission check audit logs via client API
+curl "http://localhost:8787/v1/audit-logs?action=keto.permission.check&limit=50" \
+  -H "apikey: truss_sk_your_key"
+```
+
+Tuple creation and deletion are also logged:
+- `keto.tuple.create` — logged when a tuple is created
+- `keto.tuple.delete` — logged when a tuple is deleted
+
+### Batch Check API
+
+Check up to 50 permissions in a single API call. Returns the result for each check. This is significantly more efficient than making individual check requests when you need to evaluate multiple permissions at once (e.g., rendering a UI with conditional access controls).
+
+**API Endpoint:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/keto/batch-check` | Check up to 50 permissions in one call |
+
+<Tabs>
+  <TabItem label="JavaScript">
+```javascript
+const results = await fetch(`${TRUSS_URL}/api/keto/batch-check`, {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    checks: [
+      { namespace: "Project", object: "proj-1", relation: "view", subject_id: "user-123" },
+      { namespace: "Project", object: "proj-1", relation: "edit", subject_id: "user-123" },
+      { namespace: "Project", object: "proj-1", relation: "delete", subject_id: "user-123" },
+      { namespace: "Project", object: "proj-2", relation: "view", subject_id: "user-123" },
+      { namespace: "Document", object: "doc-1", relation: "view", subject_id: "user-123" },
+    ],
+  }),
+}).then(r => r.json());
+
+// {
+//   "results": [
+//     { "namespace": "Project", "object": "proj-1", "relation": "view", "subject_id": "user-123", "allowed": true },
+//     { "namespace": "Project", "object": "proj-1", "relation": "edit", "subject_id": "user-123", "allowed": true },
+//     { "namespace": "Project", "object": "proj-1", "relation": "delete", "subject_id": "user-123", "allowed": false },
+//     { "namespace": "Project", "object": "proj-2", "relation": "view", "subject_id": "user-123", "allowed": true },
+//     { "namespace": "Document", "object": "doc-1", "relation": "view", "subject_id": "user-123", "allowed": false }
+//   ]
+// }
+```
+  </TabItem>
+  <TabItem label="Python">
+```python
+results = requests.post(f"{TRUSS_URL}/api/keto/batch-check", cookies=cookies, json={
+    "checks": [
+        {"namespace": "Project", "object": "proj-1", "relation": "view", "subject_id": "user-123"},
+        {"namespace": "Project", "object": "proj-1", "relation": "edit", "subject_id": "user-123"},
+        {"namespace": "Project", "object": "proj-2", "relation": "view", "subject_id": "user-123"},
+    ]
+}).json()
+
+for r in results["results"]:
+    print(f"{r['object']}#{r['relation']}: {'allowed' if r['allowed'] else 'denied'}")
+```
+  </TabItem>
+  <TabItem label="cURL">
+```bash
+curl -X POST http://localhost:8787/api/keto/batch-check \
+  -H "Content-Type: application/json" \
+  -H "Cookie: truss_session=your-session-token" \
+  -d '{
+    "checks": [
+      {"namespace":"Project","object":"proj-1","relation":"view","subject_id":"user-123"},
+      {"namespace":"Project","object":"proj-1","relation":"edit","subject_id":"user-123"},
+      {"namespace":"Project","object":"proj-2","relation":"view","subject_id":"user-123"}
+    ]
+  }'
+```
+  </TabItem>
+</Tabs>
+
+**Limits:** Maximum 50 checks per batch request. Returns `400` if the limit is exceeded.
+
+---
+
+## Health Check
+
+Verify that Keto is reachable and operational. The health endpoint is cached for 30 seconds.
+
+**API Endpoint:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/keto/health` | Check Keto read API health |
+
+```bash
+curl http://localhost:8787/api/keto/health
+# { "read": { "status": "ok" }, "writeConfigured": true }
+```
+
+---
+
+## Complete API Reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/keto/health` | Health check (cached 30s) |
+| `GET` | `/api/keto/namespaces` | List namespaces |
+| `GET` | `/api/keto/relation-tuples` | List tuples with filters |
+| `PUT` | `/api/keto/relation-tuples` | Create a tuple |
+| `DELETE` | `/api/keto/relation-tuples` | Delete a tuple |
+| `POST` | `/api/keto/check` | Check a permission |
+| `POST` | `/api/keto/batch-check` | Batch check (up to 50) |
+| `GET` | `/api/keto/expand` | Expand permission tree |
+| `POST` | `/api/keto/who-can-access` | Reverse lookup: who has access? |
+| `GET` | `/api/keto/subject-tuples/:id` | All tuples for a subject |
+| `POST` | `/api/keto/relation-tuples/import` | Bulk import (up to 500) |
+| `POST` | `/api/keto/relation-tuples/batch-delete` | Bulk delete |
+| `GET` | `/api/keto/opl-versions` | List OPL snapshots |
+| `POST` | `/api/keto/opl-versions` | Save OPL snapshot |

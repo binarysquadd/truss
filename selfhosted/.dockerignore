@@ -1,0 +1,12 @@
+node_modules
+.git
+.env
+.env.*
+*.md
+docs/
+apps/admin/
+apps/docs/
+apps/www/
+apps/api/
+*.tsbuildinfo
+.vite

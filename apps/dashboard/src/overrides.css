@@ -1,0 +1,39 @@
+/* ── Cursor & selection overrides ─────────────────────────────────── */
+/* Kill I-beam cursor on all non-editable elements */
+html, html * {
+  cursor: default !important;
+}
+
+/* Restore text cursor + selection on editable elements */
+input, textarea, [contenteditable="true"],
+input *, textarea *, [contenteditable="true"] *,
+.monaco-editor, .monaco-editor *,
+.view-lines, .view-lines *,
+pre, code {
+  cursor: text !important;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+
+/* Restore pointer on interactive elements */
+a, button, select, label[for], [role="button"], summary,
+a *, button *, select *, [role="button"] *,
+.truss-btn, .truss-btn *,
+[onclick], [tabindex] {
+  cursor: pointer !important;
+}
+
+/* ── Monaco editor polish (theme-agnostic) ───────────────────────── */
+.monaco-editor {
+  border-radius: 8px !important;
+  overflow: hidden !important;
+}
+
+/* Scrollbar styling */
+.monaco-editor .scrollbar .slider {
+  border-radius: 4px !important;
+}
+
+.monaco-editor .scroll-decoration {
+  box-shadow: none !important;
+}

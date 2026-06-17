@@ -1,0 +1,493 @@
+---
+title: Database
+description: SQL-over-HTTP, Auto-REST, and database management.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Truss wraps PostgreSQL with a SQL workbench, schema browser, ERD visualizer, and a client API for your applications. The dashboard lets you browse tables, run queries, and visualize your schema. The client API gives you SQL-over-HTTP and automatic CRUD endpoints.
+
+## SQL-over-HTTP
+
+Run arbitrary SQL via the client API. Requires a `service_role` API key.
+
+```bash
+curl -X POST http://localhost:8787/v1/sql \
+  -H "apikey: truss_sk_your_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sql": "SELECT id, name, email FROM users WHERE active = true",
+    "params": [],
+    "row_limit": 100
+  }'
+```
+
+```javascript
+const res = await fetch('http://localhost:8787/v1/sql', {
+  method: 'POST',
+  headers: {
+    'apikey': 'truss_sk_your_key',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    sql: 'SELECT * FROM users WHERE id = $1',
+    params: [42]
+  })
+});
+const { rows, columns, rowCount } = await res.json();
+```
+
+Response includes `rows`, `rowCount`, `columns` (with type info), and `command` (SELECT, INSERT, etc.).
+
+### Transactions
+
+Bundle multiple statements in a single transaction:
+
+```bash
+curl -X POST http://localhost:8787/v1/sql/transaction \
+  -H "apikey: truss_sk_your_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "statements": [
+      {"sql": "INSERT INTO orders (user_id, total) VALUES ($1, $2)", "params": [1, 99.99]},
+      {"sql": "UPDATE users SET order_count = order_count + 1 WHERE id = $1", "params": [1]}
+    ]
+  }'
+```
+
+Up to 20 statements per transaction. If any statement fails, the entire transaction rolls back.
+
+## Auto-REST (CRUD)
+
+Every table gets automatic REST endpoints at `/v1/db/:table`. Works with both `anon` and `service_role` keys.
+
+### Select rows
+
+```bash
+# Get all users
+curl "http://localhost:8787/v1/db/users" \
+  -H "apikey: truss_pk_your_anon_key"
+
+# With filters, ordering, pagination
+curl "http://localhost:8787/v1/db/users?active=eq.true&order=created_at.desc&limit=10&offset=0" \
+  -H "apikey: truss_pk_your_anon_key"
+
+# Select specific columns
+curl "http://localhost:8787/v1/db/users?select=id,name,email" \
+  -H "apikey: truss_pk_your_anon_key"
+```
+
+### Filter operators
+
+| Operator | Example | SQL equivalent |
+|----------|---------|---------------|
+| `eq` | `?status=eq.active` | `status = 'active'` |
+| `neq` | `?role=neq.admin` | `role != 'admin'` |
+| `gt` / `gte` | `?age=gt.18` | `age > 18` |
+| `lt` / `lte` | `?price=lt.100` | `price < 100` |
+| `like` | `?name=like.*john*` | `name LIKE '%john%'` |
+| `ilike` | `?name=ilike.*john*` | `name ILIKE '%john%'` |
+| `is` | `?deleted_at=is.null` | `deleted_at IS NULL` |
+| `in` | `?id=in.(1,2,3)` | `id IN (1, 2, 3)` |
+
+### Insert rows
+
+```bash
+# Single row
+curl -X POST http://localhost:8787/v1/db/users \
+  -H "apikey: truss_sk_your_key" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Alice", "email": "alice@example.com"}'
+
+# Multiple rows
+curl -X POST http://localhost:8787/v1/db/users \
+  -H "apikey: truss_sk_your_key" \
+  -H "Content-Type: application/json" \
+  -d '[
+    {"name": "Alice", "email": "alice@example.com"},
+    {"name": "Bob", "email": "bob@example.com"}
+  ]'
+```
+
+### Update rows
+
+Filters are required — you can't update without a WHERE clause.
+
+```bash
+curl -X PATCH "http://localhost:8787/v1/db/users?id=eq.42" \
+  -H "apikey: truss_sk_your_key" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Updated Name"}'
+```
+
+### Delete rows
+
+Filters are required — you can't delete without a WHERE clause.
+
+```bash
+curl -X DELETE "http://localhost:8787/v1/db/users?id=eq.42" \
+  -H "apikey: truss_sk_your_key"
+```
+
+### Call functions
+
+```bash
+curl -X POST http://localhost:8787/v1/db/rpc/my_function \
+  -H "apikey: truss_sk_your_key" \
+  -H "Content-Type: application/json" \
+  -d '{"arg1": "value1", "arg2": 42}'
+```
+
+## Row-Level Security (RLS)
+
+When using an `anon` key, Truss sets the Postgres role to `authenticated` and passes JWT claims via `set_config`. Your RLS policies can reference:
+
+- `current_setting('request.jwt.claims', true)` — full JWT payload
+- `current_setting('request.jwt.sub', true)` — the `sub` claim (user ID)
+
+With a `service_role` key, RLS is bypassed entirely (role is set to `postgres`).
+
+## SQL Workbench
+
+The SQL workbench is the primary interface for running queries against your database. It is built on the Monaco editor (the same editor that powers VS Code).
+
+### Monaco editor
+
+The editor provides:
+- **Syntax highlighting** for SQL keywords, strings, numbers, and comments
+- **Autocomplete** for table names, column names, functions, and SQL keywords — powered by your live schema
+- **Multi-cursor editing** and standard keyboard shortcuts (Ctrl+D, Ctrl+Shift+K, etc.)
+- **Run selection** — highlight a portion of your query and execute only that fragment
+- **Keyboard shortcut** — press Ctrl+Enter (Cmd+Enter on macOS) to execute the current query
+
+### Query history
+
+Every query you execute is saved to your local session history. The history panel lets you:
+- Browse previously executed queries with timestamps
+- Click any entry to load it back into the editor
+- See execution time and row count for past queries
+
+### Saved queries
+
+Save frequently used queries with a label for quick access. Saved queries persist across sessions.
+
+## ERD Visualization
+
+The entity-relationship diagram (ERD) view generates a visual map of your database schema using ReactFlow. It displays:
+- **Tables as nodes** — each node shows the table name, columns, data types, and constraint indicators (PK, FK, NOT NULL)
+- **Foreign key relationships** as directed edges between nodes
+- **Draggable layout** — rearrange nodes freely to organize your diagram
+- **Auto-layout** — click the layout button to auto-arrange tables by relationship proximity
+- **Zoom and pan** — scroll to zoom, drag the canvas to pan
+
+Navigate to **Database > ERD** in the dashboard to view it. The diagram updates automatically when your schema changes.
+
+## Database Branching
+
+Database branching lets you create isolated copies of your database for testing, development, or migrations — without touching production data.
+
+### How it works
+
+A branch is a full PostgreSQL database created from a template of your current database using `CREATE DATABASE ... TEMPLATE`. This gives you an exact copy of schema and data at the point of creation.
+
+### Creating a branch
+
+```bash
+curl -X POST http://localhost:8787/api/branches \
+  -H "Content-Type: application/json" \
+  -d '{
+    "label": "feature-user-profiles",
+    "ttlHours": 24
+  }'
+```
+
+- **label** — a human-readable name for the branch (max 60 characters)
+- **ttlHours** — optional time-to-live in hours; the branch auto-expires after this duration (0 = no expiry)
+
+### Listing branches
+
+```bash
+curl http://localhost:8787/api/branches
+```
+
+Returns all active branches with their size in bytes, creation timestamp, and TTL status.
+
+### Switching to a branch
+
+From the dashboard, click on a branch to switch your active database connection to it. The SQL workbench, schema browser, and ERD all reflect the branch's state. You can run mutations freely without affecting the main database.
+
+### Deleting a branch
+
+```bash
+curl -X DELETE http://localhost:8787/api/branches/{id}
+```
+
+Branch databases are dropped entirely. This action is irreversible.
+
+### TTL auto-expire
+
+If you set a `ttlHours` value when creating a branch, Truss automatically marks the branch as expired after the specified duration. Expired branches are cleaned up on the next check cycle. In self-hosted Truss, branches are unlimited — the only constraint is available disk space.
+
+## Backups and Point-in-Time Recovery (PITR)
+
+Truss provides backup management through the dashboard and API. Backups use `pg_dump` under the hood.
+
+### Creating a backup
+
+```bash
+curl -X POST http://localhost:8787/api/backups \
+  -H "Content-Type: application/json" \
+  -d '{"label": "pre-migration-backup"}'
+```
+
+Up to 2 backups can run concurrently. Additional requests are queued or rejected.
+
+### Listing backups
+
+```bash
+curl http://localhost:8787/api/backups
+```
+
+Each backup entry includes:
+- **label** — your descriptive name
+- **size_bytes** — the backup file size
+- **status** — `completed`, `in_progress`, or `failed`
+- **created_at** — timestamp
+
+### Restoring from a backup
+
+```bash
+curl -X POST http://localhost:8787/api/backups/{id}/restore
+```
+
+Restore replays the backup into a new branch database, allowing you to inspect the restored state before switching your main connection.
+
+### Point-in-time recovery
+
+PITR allows you to restore your database to a specific timestamp. This relies on WAL (Write-Ahead Log) archiving being enabled in your PostgreSQL configuration. From the dashboard, select a backup and choose "Restore to point in time" to specify a target timestamp.
+
+## Full-Text Search
+
+Truss includes a full-text search module built on PostgreSQL's native `tsvector` and `tsquery` capabilities. Set up search on any table with weighted columns, auto-updating triggers, and GIN indexes.
+
+For the complete guide, see [Full-Text Search](./search/).
+
+## Vectors (pgvector)
+
+Truss supports pgvector for AI embedding storage and similarity search. Create vector collections, build HNSW or IVFFlat indexes, and run cosine/L2/inner-product similarity queries.
+
+For the complete guide, see [Vectors](./vectors/).
+
+## Database Roles Manager
+
+The roles manager lets you view and manage PostgreSQL roles directly from the dashboard. Navigate to **Database > Roles** to see:
+
+- All database roles with their attributes (LOGIN, SUPERUSER, CREATEDB, etc.)
+- Role membership — which roles inherit from which
+- Create new roles with specific privileges
+- Alter or drop existing roles
+
+```sql
+-- Example: create a read-only role
+CREATE ROLE app_readonly WITH LOGIN PASSWORD 'secret';
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO app_readonly;
+```
+
+## Table Partitioning Advisor
+
+The partitioning advisor analyzes your tables and recommends partitioning strategies for large tables. It considers:
+
+- **Row count** — tables above a configurable threshold are flagged
+- **Table size** — large tables that would benefit from range or list partitioning
+- **Common query patterns** — suggests partition keys based on date columns or category columns
+
+Access it from **Database > Partitioning** in the dashboard.
+
+## RLS Debugger
+
+The Row-Level Security debugger lets you test your RLS policies by running queries as a specific user or role. This is useful for verifying that policies work as expected before deploying.
+
+From the dashboard:
+1. Navigate to **Database > RLS Debugger**
+2. Select a role (e.g., `authenticated`) or enter a user ID
+3. Write a query in the editor
+4. Execute — the query runs with `SET ROLE` and `set_config` applied, simulating that user's access
+
+This helps catch policy gaps without needing to log in as different users.
+
+## Index Usage Advisor
+
+The index usage advisor queries PostgreSQL's `pg_stat_user_indexes` and `pg_stat_user_tables` to surface:
+
+- **Unused indexes** — indexes with zero scans that waste disk space and slow down writes
+- **Missing indexes** — tables with high sequential scan counts that would benefit from an index
+- **Duplicate indexes** — indexes that cover the same columns as another index
+- **Recommended actions** — `DROP INDEX` statements for unused indexes, `CREATE INDEX` suggestions for missing ones
+
+Access it from **Database > Index Advisor** in the dashboard.
+
+## Table Bloat Estimator
+
+PostgreSQL tables accumulate bloat over time from UPDATE and DELETE operations. The bloat estimator queries `pgstattuple` or uses statistical estimation to show:
+
+- **Dead tuple ratio** — percentage of dead rows in each table
+- **Estimated bloat** — wasted disk space per table
+- **Recommended action** — suggests `VACUUM FULL` or `pg_repack` for heavily bloated tables
+
+Navigate to **Database > Bloat** in the dashboard to view the report.
+
+## Foreign Data Wrappers (FDW)
+
+Truss provides a UI for managing Foreign Data Wrappers, which let you query external databases as if they were local tables.
+
+### Supported operations
+
+- **Create foreign server** — configure connection to a remote PostgreSQL (or other) database
+- **Create user mapping** — map local roles to remote credentials
+- **Import foreign schema** — import tables from the remote server
+- **Drop** — remove foreign servers, user mappings, and foreign tables
+
+```sql
+-- Example: connect to an external PostgreSQL
+CREATE SERVER remote_db FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host 'remote-host', dbname 'analytics', port '5432');
+
+CREATE USER MAPPING FOR current_user SERVER remote_db
+  OPTIONS (user 'reader', password 'secret');
+
+IMPORT FOREIGN SCHEMA public FROM SERVER remote_db INTO foreign_analytics;
+```
+
+Manage these from **Database > FDW** in the dashboard.
+
+## Slow Query Log
+
+The slow query log surfaces long-running queries by querying `pg_stat_statements` (if the extension is enabled) or `pg_stat_activity`. It shows:
+
+- **Query text** — the SQL statement (normalized)
+- **Total time** — cumulative execution time
+- **Mean time** — average execution time per call
+- **Calls** — number of times the query has been executed
+- **Rows** — average rows returned per call
+
+Filter by minimum execution time to focus on the worst offenders. Access it from **Database > Slow Queries** in the dashboard.
+
+## Performance Metrics
+
+Truss collects and displays database performance metrics including:
+
+- **p50 / p95 / p99 latency** — query execution time percentiles
+- **Queries per second** — throughput over time
+- **Active connections** — current connection count vs. pool maximum
+- **Cache hit ratio** — percentage of reads served from shared buffers
+- **Transaction rate** — commits and rollbacks per second
+
+These metrics are computed from `pg_stat_database`, `pg_stat_statements`, and connection pool telemetry. View them from **Database > Performance** in the dashboard.
+
+## Connection Snippets
+
+<Tabs>
+  <TabItem label="Direct">
+```bash
+# DATABASE_URL
+DATABASE_URL="postgresql://user:password@host:5432/dbname"
+
+# psql CLI
+psql "postgresql://user:password@host:5432/dbname"
+
+# Connection Parameters
+PGHOST="host"
+PGPORT="5432"
+PGDATABASE="dbname"
+PGUSER="user"
+PGPASSWORD="password"
+```
+  </TabItem>
+  <TabItem label="ORMs">
+```javascript
+// Prisma (.env)
+DATABASE_URL="postgresql://user:password@host:5432/dbname?pgbouncer=true"
+DIRECT_URL="postgresql://user:password@host:5432/dbname"
+
+// schema.prisma
+// datasource db {
+//   provider  = "postgresql"
+//   url       = env("DATABASE_URL")
+//   directUrl = env("DIRECT_URL")
+// }
+```
+
+```typescript
+// Drizzle ORM
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
+
+const pool = new Pool({ connectionString: DATABASE_URL });
+export const db = drizzle(pool);
+```
+
+```typescript
+// Kysely
+import { Kysely, PostgresDialect } from "kysely";
+import { Pool } from "pg";
+
+const db = new Kysely<Database>({
+  dialect: new PostgresDialect({
+    pool: new Pool({ connectionString: DATABASE_URL }),
+  }),
+});
+```
+  </TabItem>
+  <TabItem label="Frameworks">
+```javascript
+// Node.js - pg
+import { Pool } from "pg";
+
+const pool = new Pool({
+  host: "host",
+  port: 5432,
+  database: "dbname",
+  user: "user",
+  password: "password",
+});
+
+export default pool;
+```
+
+```go
+// Go - pgx
+import "github.com/jackc/pgx/v5/pgxpool"
+
+pool, err := pgxpool.New(ctx, DATABASE_URL)
+```
+
+```python
+# Python - SQLAlchemy
+from sqlalchemy import create_engine
+
+engine = create_engine(
+    "postgresql+psycopg2://user:password@host:5432/dbname"
+)
+```
+
+```python
+# Python - psycopg2
+import psycopg2
+
+conn = psycopg2.connect(
+    host="host", port=5432,
+    dbname="dbname",
+    user="user", password="password"
+)
+```
+
+```java
+// JDBC
+String url = "jdbc:postgresql://host:5432/dbname";
+Properties props = new Properties();
+props.setProperty("user", "user");
+props.setProperty("password", "password");
+Connection conn = DriverManager.getConnection(url, props);
+```
+  </TabItem>
+</Tabs>

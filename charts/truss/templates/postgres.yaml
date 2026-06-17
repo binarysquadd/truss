@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: truss-postgres
+spec:
+  selector: { app: truss-postgres }
+  ports: [{ port: 5432, targetPort: 5432 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: truss-postgres
+spec:
+  serviceName: truss-postgres
+  replicas: 1
+  selector:
+    matchLabels: { app: truss-postgres }
+  template:
+    metadata:
+      labels: { app: truss-postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.images.postgres }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          # Minimal hardening only: the official postgres entrypoint drops to the
+          # `postgres` user itself and needs to start as root (or run as uid 999
+          # with a matching fsGroup) to chown PGDATA / run initdb. Forcing
+          # The official postgres image starts as root to chown its data dir, then
+          # drops to the postgres user — so it needs default caps (CHOWN/SETUID).
+          # Dropping ALL caps or runAsNonRoot breaks first boot.
+          securityContext:
+            allowPrivilegeEscalation: false
+          env:
+            - { name: POSTGRES_USER, value: truss }
+            - { name: POSTGRES_DB, value: truss }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: db-password } }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports: [{ containerPort: 5432 }]
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "truss", "-d", "truss"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+          resources: {{- toYaml .Values.resources.medium | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: {{ .Values.postgres.storage }} } }
+---
+# One-shot: create the `keto` + `hydra` schemas so their migrations can use
+# search_path. (Mirrors the compose's postgres-init.) Runs after the StatefulSet is up.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: truss-postgres-init
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: {{ .Values.images.postgres }}
+          command: ["/bin/sh", "-ec"]
+          env:
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: db-password } }
+          args:
+            - |
+              until pg_isready -h truss-postgres -U truss -d truss; do echo "waiting for postgres"; sleep 2; done
+              psql "postgres://truss:${DB_PASSWORD}@truss-postgres:5432/truss?sslmode=disable" -c "CREATE SCHEMA IF NOT EXISTS keto; CREATE SCHEMA IF NOT EXISTS hydra;"
+              echo "keto + hydra schemas ready"

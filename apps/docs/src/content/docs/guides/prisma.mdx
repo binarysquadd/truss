@@ -1,0 +1,201 @@
+---
+title: Prisma
+description: Connect Prisma ORM to your Truss database for schema management and type-safe queries.
+---
+
+Prisma is a popular TypeScript ORM with a declarative schema language and powerful migration system. This guide covers connecting Prisma to your Truss database, running migrations, and using Truss's migration tools alongside Prisma.
+
+## Connect to Truss
+
+Install Prisma:
+
+```bash
+npm install prisma @prisma/client
+npx prisma init
+```
+
+Set the connection string in your `.env` file. You can find this in the Truss dashboard under **Database > Connection**:
+
+```bash
+# .env
+DATABASE_URL=postgresql://postgres:your-password@your-truss-host:5432/truss
+```
+
+Prisma reads `DATABASE_URL` automatically from `.env`.
+
+---
+
+## Define a Schema
+
+Edit the generated `prisma/schema.prisma` file:
+
+```prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  name      String?
+  posts     Post[]
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("users")
+}
+
+model Post {
+  id        Int      @id @default(autoincrement())
+  title     String
+  content   String?
+  published Boolean  @default(false)
+  author    User     @relation(fields: [authorId], references: [id])
+  authorId  Int      @map("author_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("posts")
+}
+```
+
+---
+
+## Migration Workflow
+
+### Option 1: Prisma CLI (recommended)
+
+Create and apply migrations during development:
+
+```bash
+# Generate a migration from schema changes
+npx prisma migrate dev --name add-users-and-posts
+```
+
+This command:
+1. Diffs your schema against the database
+2. Generates a SQL migration file in `prisma/migrations/`
+3. Applies the migration
+4. Regenerates the Prisma Client
+
+For production deployments, use:
+
+```bash
+npx prisma migrate deploy
+```
+
+This applies all pending migrations without generating new ones.
+
+### Option 2: Truss Migration API
+
+Truss can also manage Prisma migrations through its idempotent runner. Once Prisma has created migration files, Truss detects the `_prisma_migrations` tracking table and can manage the migration lifecycle:
+
+```bash
+# Check status (Truss auto-detects Prisma's tracking table)
+curl http://localhost:8787/api/migrations/idempotent/status
+
+# Run pending migrations
+curl -X POST http://localhost:8787/api/migrations/idempotent/run
+
+# Preview a specific migration's SQL
+curl http://localhost:8787/api/migrations/preview/20250115120000_add_users_and_posts
+```
+
+This is useful for CI/CD pipelines where you want a single API to manage migrations regardless of which ORM generated them.
+
+---
+
+## Auto-Detection
+
+Truss automatically detects the `_prisma_migrations` tracking table. After your first Prisma migration, the Truss dashboard **Database > Migrations** panel will:
+
+- Identify your framework as "Prisma"
+- Display all applied and pending migrations
+- Show migration state (applied, pending, modified, orphaned)
+- Let you preview SQL, run migrations, or mark them as applied
+
+No additional configuration is required.
+
+---
+
+## Querying
+
+Generate the Prisma Client and use it in your application:
+
+```bash
+npx prisma generate
+```
+
+```typescript
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+// Create a user with a post
+const user = await prisma.user.create({
+  data: {
+    email: 'alice@example.com',
+    name: 'Alice',
+    posts: {
+      create: {
+        title: 'Getting started with Truss',
+        content: 'Truss makes self-hosting easy.',
+        published: true,
+      },
+    },
+  },
+  include: { posts: true },
+});
+
+// Query with filters
+const publishedPosts = await prisma.post.findMany({
+  where: { published: true },
+  include: { author: true },
+  orderBy: { createdAt: 'desc' },
+});
+
+// Update
+await prisma.user.update({
+  where: { id: user.id },
+  data: { name: 'Alice Smith' },
+});
+
+// Delete
+await prisma.post.delete({ where: { id: 1 } });
+```
+
+---
+
+## Prisma Studio
+
+Prisma includes a visual database browser:
+
+```bash
+npx prisma studio
+```
+
+This opens a web UI at `http://localhost:5555` where you can browse and edit data. Note that the Truss SQL workbench is read-only, so Prisma Studio is useful when you need a GUI for manual data edits.
+
+---
+
+## Introspection
+
+If your Truss database already has tables (from raw SQL, another ORM, or the Truss Migration API), you can pull the existing schema into Prisma:
+
+```bash
+npx prisma db pull
+```
+
+This overwrites `prisma/schema.prisma` with models matching your current database structure. Useful when migrating an existing Truss project to Prisma.
+
+---
+
+## Notes
+
+- The Truss SQL workbench is read-only (SELECT, WITH, EXPLAIN). All DDL and DML should go through Prisma CLI or the Migration API.
+- Prisma connects directly to PostgreSQL. The Truss API is not in the query path.
+- For database branching, update `DATABASE_URL` to point at the branch database. See [Branching & Backups](./branching/).
+- Prisma supports raw SQL via `prisma.$queryRaw` if you need to use PostgreSQL-specific features like pgvector or full-text search.

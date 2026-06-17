@@ -1,0 +1,221 @@
+---
+title: API Keys
+description: Understanding anon and service_role API keys.
+---
+
+Truss uses API keys to authenticate client API requests. Every `/v1/*` endpoint requires a key passed via the `apikey` header (or `x-api-key`).
+
+## Key types
+
+| Type | Prefix | RLS behavior | Use case |
+|------|--------|-------------|----------|
+| `anon` | `truss_pk_` | Respects RLS policies | Client-side apps, public-facing |
+| `service_role` | `truss_sk_` | Bypasses RLS (runs as `postgres` role) | Server-side, admin scripts, CLI |
+
+### anon keys
+
+Anon keys are safe to expose in client-side code. They respect PostgreSQL Row-Level Security (RLS) policies, so users can only access data their policies allow.
+
+When a request uses an anon key with a JWT in the Authorization header, Truss:
+1. Decodes the JWT payload
+2. Sets `request.jwt.claims` and `request.jwt.sub` as Postgres session config
+3. Switches to the `authenticated` role
+
+### service_role keys
+
+Service role keys bypass RLS entirely and run queries as the `postgres` role. Never expose these in client-side code. Use them for:
+- Server-side API calls
+- Admin scripts and migrations
+- Management API endpoints (which require service_role)
+- CI/CD pipelines
+
+## Creating keys
+
+### Via dashboard
+
+Navigate to **Settings > API Keys** and click "Create Key". Choose the type and give it a label.
+
+### Via API
+
+```bash
+curl -X POST http://localhost:8787/api/keys \
+  -H "Content-Type: application/json" \
+  -d '{"keyType": "service_role", "label": "backend-server"}'
+```
+
+Response:
+
+```json
+{
+  "key": {
+    "id": 1,
+    "key_type": "service_role",
+    "key_prefix": "truss_sk_abc",
+    "label": "backend-server",
+    "created_at": "2025-01-15T10:00:00Z"
+  },
+  "secret": "truss_sk_abcdefghij..."
+}
+```
+
+The `secret` is only returned once at creation time. Store it securely.
+
+## Using keys
+
+Pass the key via the `apikey` header:
+
+```bash
+curl http://localhost:8787/v1/db/users \
+  -H "apikey: truss_pk_your_anon_key"
+```
+
+```javascript
+const res = await fetch('http://localhost:8787/v1/db/users', {
+  headers: { apikey: 'truss_pk_your_anon_key' }
+});
+```
+
+The `x-api-key` header also works as an alias.
+
+## Revoking keys
+
+```bash
+curl -X DELETE http://localhost:8787/api/keys/{id}
+```
+
+Revoked keys immediately stop working. The key row is kept for audit purposes but marked as revoked.
+
+## Rate limiting
+
+API keys are rate-limited per minute. The default limit is 100 requests/minute, configurable in self-hosted Truss. Rate limit headers are returned on every response:
+
+```
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+```
+
+When the limit is exceeded, the API returns `429 Too Many Requests`.
+
+## Security
+
+- Keys are stored as SHA-256 hashes — the raw key is never stored
+- Each key tracks `last_used_at` for auditing
+- Revoked keys are rejected immediately
+- Rate limiting is per-key, in-memory, with a 60-second sliding window
+
+## anon vs service_role Keys Explained
+
+Understanding the difference between key types is critical for securing your application.
+
+### anon keys (`truss_pk_*`)
+
+Anon keys are designed to be used in **client-side code** (browser, mobile app). They are safe to expose publicly because:
+- All queries run with the `authenticated` PostgreSQL role
+- Row-Level Security (RLS) policies are enforced — users can only access data their policies allow
+- JWT claims from the `Authorization` header are passed to Postgres as session variables, so RLS policies can reference the authenticated user
+
+Use anon keys when:
+- Building a frontend that queries the database directly
+- Your tables have RLS policies that restrict access per user
+- You want to expose the API to untrusted clients
+
+### service_role keys (`truss_sk_*`)
+
+Service role keys are for **server-side code only**. They bypass RLS entirely and run queries as the `postgres` superuser role. Never expose these in client-side code.
+
+Use service_role keys when:
+- Running admin scripts or migrations
+- Server-to-server API calls from your backend
+- Accessing management API endpoints
+- CI/CD pipelines and automation
+
+## Key Rotation
+
+To rotate a key without downtime:
+
+1. **Create a new key** with the same type (anon or service_role)
+2. **Update your application** to use the new key
+3. **Verify** the new key works in production
+4. **Revoke the old key** once all clients have migrated
+
+```bash
+# 1. Create new key
+curl -X POST http://localhost:8787/api/keys \
+  -H "Content-Type: application/json" \
+  -d '{"keyType": "service_role", "label": "backend-v2"}'
+
+# 2. Update your app's environment variable with the new key
+
+# 3. Revoke old key
+curl -X DELETE http://localhost:8787/api/keys/{old_key_id}
+```
+
+There is no automatic rotation schedule — rotation is a manual operation. The `last_used_at` timestamp on each key helps you verify whether the old key is still in use before revoking it.
+
+## Per-Key Rate Limits
+
+Each API key is independently rate-limited. The default limit is 100 requests/minute, configurable in self-hosted Truss. Rate limit headers are included on every response:
+
+```
+X-RateLimit-Limit: 500
+X-RateLimit-Remaining: 487
+X-RateLimit-Reset: 1705312800
+```
+
+When the limit is exceeded, the API returns `429 Too Many Requests` with a `Retry-After` header. Rate limiting uses a 60-second sliding window tracked in memory per key.
+
+## Using Keys with the Client API
+
+All `/v1/*` endpoints require an API key. Pass it via the `apikey` header (or `x-api-key`).
+
+### REST CRUD
+
+```bash
+# Read (anon key is fine if RLS allows it)
+curl http://localhost:8787/v1/db/posts \
+  -H "apikey: truss_pk_your_anon_key"
+
+# Write (service_role key bypasses RLS)
+curl -X POST http://localhost:8787/v1/db/posts \
+  -H "apikey: truss_sk_your_key" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Hello", "body": "World"}'
+```
+
+### SQL-over-HTTP
+
+```bash
+curl -X POST http://localhost:8787/v1/sql \
+  -H "apikey: truss_sk_your_key" \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT count(*) FROM users"}'
+```
+
+### With JWT (anon key + authenticated user)
+
+When using an anon key with a JWT, include the token in the `Authorization` header. Truss extracts the claims and passes them to Postgres for RLS evaluation.
+
+```javascript
+const res = await fetch('http://localhost:8787/v1/db/messages', {
+  headers: {
+    'apikey': 'truss_pk_your_anon_key',
+    'Authorization': `Bearer ${userJwt}`
+  }
+});
+```
+
+### Management endpoints
+
+Management endpoints (`/v1/status`, `/v1/database/schema`, `/v1/webhooks`, etc.) require a `service_role` key:
+
+```bash
+curl http://localhost:8787/v1/status \
+  -H "apikey: truss_sk_your_key"
+
+curl http://localhost:8787/v1/database/schema \
+  -H "apikey: truss_sk_your_key"
+```
+
+## Management API keys
+
+The management API endpoints (`/v1/status`, `/v1/projects`, `/v1/database/schema`, etc.) require a `service_role` key. Attempting to access them with an `anon` key returns `403 Forbidden`.

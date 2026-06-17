@@ -1,0 +1,66 @@
+---
+/**
+ * Custom Banner override — shows a global beta disclaimer on every page,
+ * plus any per-page banner from frontmatter.
+ */
+const { banner } = Astro.locals.starlightRoute.entry.data;
+---
+
+<div class="sl-beta-banner">
+  <strong>Beta</strong> — Truss is in public beta. Documentation is actively updated but may not
+  reflect the latest changes.
+  <a href="https://github.com/binarysquad-io/truss/issues">Report issues on GitHub</a>.
+</div>
+
+{banner && <div class="sl-banner" set:html={banner.content} />}
+
+<style>
+  .sl-beta-banner {
+    padding: 0.5rem var(--sl-nav-pad-x);
+    background-color: #78650d;
+    color: #fef9c3;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    text-align: center;
+    text-wrap: balance;
+  }
+  :root[data-theme="light"] .sl-beta-banner {
+    background-color: #fef3c7;
+    color: #78350f;
+  }
+  .sl-beta-banner strong {
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    background-color: rgba(255, 255, 255, 0.15);
+    margin-right: 0.35rem;
+    vertical-align: baseline;
+  }
+  :root[data-theme="light"] .sl-beta-banner strong {
+    background-color: rgba(120, 53, 15, 0.12);
+  }
+  .sl-beta-banner a {
+    color: #fef9c3;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  :root[data-theme="light"] .sl-beta-banner a {
+    color: #92400e;
+  }
+  .sl-banner {
+    --__sl-banner-text: var(--sl-color-banner-text, var(--sl-color-text-invert));
+    padding: var(--sl-nav-pad-y) var(--sl-nav-pad-x);
+    background-color: var(--sl-color-banner-bg, var(--sl-color-bg-accent));
+    color: var(--__sl-banner-text);
+    line-height: var(--sl-line-height-headings);
+    text-align: center;
+    text-wrap: balance;
+    box-shadow: var(--sl-shadow-sm);
+  }
+  .sl-banner :global(a) {
+    color: var(--__sl-banner-text);
+  }
+</style>

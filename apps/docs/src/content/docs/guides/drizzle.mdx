@@ -1,0 +1,192 @@
+---
+title: Drizzle ORM
+description: Connect Drizzle ORM to your Truss database for type-safe queries and managed migrations.
+---
+
+Drizzle ORM is a lightweight, type-safe TypeScript ORM that works directly with your Truss PostgreSQL database. This guide covers connection setup, schema definition, migrations, and realtime integration.
+
+## Connect to Truss
+
+Install Drizzle and the PostgreSQL driver:
+
+```bash
+npm install drizzle-orm postgres
+npm install -D drizzle-kit
+```
+
+Grab your connection string from the Truss dashboard under **Database > Connection**. Set it as an environment variable:
+
+```bash
+# .env
+DATABASE_URL=postgresql://postgres:your-password@your-truss-host:5432/truss
+```
+
+Create a database client:
+
+```typescript
+// src/db.ts
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+
+const client = postgres(process.env.DATABASE_URL!);
+export const db = drizzle(client);
+```
+
+---
+
+## Define a Schema
+
+Drizzle schemas are plain TypeScript files that map to PostgreSQL tables:
+
+```typescript
+// src/schema.ts
+import { pgTable, serial, text, timestamp, boolean } from 'drizzle-orm/pg-core';
+
+export const todos = pgTable('todos', {
+  id: serial('id').primaryKey(),
+  title: text('title').notNull(),
+  completed: boolean('completed').default(false),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+```
+
+---
+
+## Migration Workflow
+
+### Option 1: Drizzle Kit CLI (recommended)
+
+Configure Drizzle Kit:
+
+```typescript
+// drizzle.config.ts
+import { defineConfig } from 'drizzle-kit';
+
+export default defineConfig({
+  schema: './src/schema.ts',
+  out: './drizzle',
+  dialect: 'postgresql',
+  dbCredentials: {
+    url: process.env.DATABASE_URL!,
+  },
+});
+```
+
+Generate and apply migrations:
+
+```bash
+# Generate SQL migration files from schema changes
+npx drizzle-kit generate
+
+# Apply pending migrations to the database
+npx drizzle-kit migrate
+```
+
+Drizzle Kit creates a `drizzle/` directory containing `.sql` migration files and a `meta/` directory for tracking state.
+
+### Option 2: Truss Migration API
+
+You can also run Drizzle-generated SQL migrations through the Truss Migration API. Place your `.sql` files in the Truss migrations directory (`apps/api/db/migrations/`) and use the idempotent runner:
+
+```bash
+# Check migration status (Truss auto-detects Drizzle's tracking table)
+curl http://localhost:8787/api/migrations/idempotent/status
+
+# Run pending migrations
+curl -X POST http://localhost:8787/api/migrations/idempotent/run
+```
+
+### Option 3: Push (development only)
+
+For rapid prototyping, push schema changes directly without generating migration files:
+
+```bash
+npx drizzle-kit push
+```
+
+This applies changes directly to the database. Not recommended for production.
+
+---
+
+## Auto-Detection
+
+Truss automatically detects the `drizzle.__drizzle_migrations` tracking table. Once you've run at least one Drizzle migration, the Truss dashboard **Database > Migrations** panel will:
+
+- Show your detected framework as "Drizzle ORM"
+- List all applied and pending migrations with status badges
+- Let you preview, run, or mark migrations as applied from the UI
+- Detect schema conflicts before running
+
+No configuration is needed. Truss scans for the tracking table on each status check.
+
+---
+
+## Querying
+
+Use Drizzle's type-safe query builder:
+
+```typescript
+import { db } from './db';
+import { todos } from './schema';
+import { eq } from 'drizzle-orm';
+
+// Insert a row
+const [newTodo] = await db.insert(todos).values({
+  title: 'Ship the feature',
+}).returning();
+
+// Select all incomplete todos
+const pending = await db.select()
+  .from(todos)
+  .where(eq(todos.completed, false));
+
+// Update a row
+await db.update(todos)
+  .set({ completed: true })
+  .where(eq(todos.id, newTodo.id));
+
+// Delete a row
+await db.delete(todos).where(eq(todos.id, newTodo.id));
+```
+
+---
+
+## Realtime with Drizzle
+
+Truss provides realtime subscriptions via PostgreSQL LISTEN/NOTIFY. You can combine Drizzle for writes and Truss realtime for live updates.
+
+First, subscribe to a table via the Truss API or dashboard:
+
+```bash
+curl -X POST http://localhost:8787/api/realtime/subscribe \
+  -H "Content-Type: application/json" \
+  -d '{"schema": "public", "table": "todos"}'
+```
+
+Then connect a WebSocket client to receive events when Drizzle writes to the table:
+
+```typescript
+const ws = new WebSocket('ws://your-truss-host:8787/realtime');
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  if (data.table === 'todos') {
+    console.log(`${data.operation}: ${JSON.stringify(data.row)}`);
+  }
+};
+
+// Now, any Drizzle insert/update/delete on 'todos' triggers a realtime event
+await db.insert(todos).values({ title: 'New task' });
+// WebSocket receives: { operation: "INSERT", table: "todos", row: { ... } }
+```
+
+This pattern works well for React apps: use Drizzle on the server for mutations, and a WebSocket hook on the client for live updates.
+
+---
+
+## Notes
+
+- The Truss SQL workbench is read-only (SELECT, WITH, EXPLAIN). DDL and DML run through Drizzle CLI or the Migration API.
+- Drizzle connects directly to PostgreSQL. The Truss API is not in the query path, so there is no added latency.
+- For database branching, point `DATABASE_URL` at the branch database. See [Branching & Backups](./branching/).
+- Truss supports pgvector. You can define vector columns in Drizzle using `customType` and query them through the Truss [Vectors](./vectors/) panel.

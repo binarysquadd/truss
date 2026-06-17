@@ -1,0 +1,40 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.env
+.env.selfhosted
+.astro
+
+
+.docker-ts
+
+# Deploy — secrets files are committed AFTER sops encryption.
+# *.dec files are local decrypted working copies — never commit these.
+deploy/k8s/secrets/*.dec
+deploy/secrets/*.dec
+deploy/terraform/cloudflare/terraform.tfvars
+deploy/terraform/cloudflare/terraform.tfstate
+deploy/terraform/cloudflare/terraform.tfstate.backup
+deploy/terraform/cloudflare/.terraform/
+# .terraform.lock.hcl is intentionally committed — locks provider versions for reproducible CI

@@ -1,0 +1,371 @@
+---
+title: Migrate from Supabase
+description: Step-by-step guide to move your project from Supabase to Truss.
+---
+
+This guide walks through migrating a Supabase project to Truss. The migration covers database, authentication, storage, and application code changes.
+
+## Before You Start
+
+Truss is an open-source, self-hosted BaaS built on the same foundations as Supabase (PostgreSQL, S3-compatible storage, auth) but ships with SSO, ReBAC permissions, OAuth2, API gateway, and feature flags in the core. Here is what maps where:
+
+| Supabase | Truss | Notes |
+|----------|-------|-------|
+| PostgreSQL | PostgreSQL | Direct compatibility. Extensions, RLS, functions all transfer. |
+| Supabase Auth (GoTrue) | Authentication (Ory Kratos) | Different API. User data must be migrated. |
+| Supabase Storage | Storage (MinIO) | Both S3-compatible. Files transfer via `aws s3 sync`. |
+| Realtime | Realtime (LISTEN/NOTIFY) | Different client API, same PostgreSQL mechanism. |
+| Edge Functions (Deno) | Not built-in | Use webhooks, external functions, or your own serverless platform. |
+| Supabase JS Client | Truss Client API | Different SDK. See the [Client SDK](../api-reference/client-sdk/) docs. |
+
+---
+
+## Step 1: Migrate the Database
+
+### Export from Supabase
+
+Use `pg_dump` to export your Supabase database. You can find connection details in the Supabase dashboard under **Settings > Database**.
+
+```bash
+# Export schema and data (excluding Supabase internal schemas)
+pg_dump \
+  --clean --if-exists \
+  --no-owner --no-privileges \
+  --exclude-schema='supabase_*' \
+  --exclude-schema='_supabase' \
+  --exclude-schema='extensions' \
+  --exclude-schema='_realtime' \
+  --exclude-schema='supabase_functions' \
+  --exclude-schema='storage' \
+  --exclude-schema='auth' \
+  "postgresql://postgres:[password]@db.[ref].supabase.co:5432/postgres" \
+  > supabase_export.sql
+```
+
+The `--exclude-schema` flags skip Supabase-specific internal schemas that don't apply to Truss.
+
+### Import into Truss
+
+```bash
+# Restore into your Truss database
+psql "$DATABASE_URL" < supabase_export.sql
+```
+
+Or use the Truss Migration API to run the SQL:
+
+```bash
+# Place the export as a migration file and run it
+cp supabase_export.sql apps/api/db/migrations/001_supabase-import.sql
+curl -X POST http://localhost:8787/api/migrations/idempotent/run
+```
+
+### Verify
+
+After import, check your tables and data in the Truss SQL workbench:
+
+```sql
+SELECT schemaname, tablename
+FROM pg_tables
+WHERE schemaname = 'public'
+ORDER BY tablename;
+```
+
+### Extensions
+
+Supabase enables several PostgreSQL extensions by default. Enable any you need in Truss:
+
+```sql
+-- Common Supabase extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "pgjwt";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+CREATE EXTENSION IF NOT EXISTS "vector";  -- if using pgvector
+```
+
+Run these via `psql` or the Truss Migration API. See [Extensions](./extensions/) for the full list of supported extensions.
+
+---
+
+## Step 2: Migrate Authentication
+
+Supabase Auth (GoTrue) and Truss Authentication (Ory Kratos) use different schemas and identity models. Users must be exported and re-imported.
+
+### Export users from Supabase
+
+```sql
+-- Run this against your Supabase database
+SELECT
+  id,
+  email,
+  encrypted_password,
+  raw_user_meta_data,
+  created_at,
+  email_confirmed_at
+FROM auth.users
+ORDER BY created_at;
+```
+
+Save the results as CSV or JSON.
+
+### Import into Truss via Kratos Admin API
+
+For each user, create a Kratos identity:
+
+```bash
+curl -X POST http://localhost:8787/api/auth/admin/identities \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schema_id": "default",
+    "traits": {
+      "email": "user@example.com"
+    },
+    "credentials": {
+      "password": {
+        "config": {
+          "password": "temporary-password-123"
+        }
+      }
+    }
+  }'
+```
+
+**Important notes on password migration:**
+- Supabase uses bcrypt hashes. Ory Kratos also supports bcrypt, but importing pre-hashed passwords requires direct Kratos admin API access (not the Truss proxy).
+- The simplest approach: import users with temporary passwords and trigger a password reset flow for each user.
+- For bulk imports, script the API calls in a loop or use the Kratos admin API directly.
+
+### Trigger password resets
+
+After importing, send recovery emails so users can set new passwords:
+
+```bash
+curl -X POST http://localhost:8787/api/auth/self-service/recovery \
+  -H "Content-Type: application/json" \
+  -d '{"email": "user@example.com", "method": "link"}'
+```
+
+### Migrate user metadata
+
+Supabase stores custom user data in `raw_user_meta_data`. In Truss, use Kratos identity traits or metadata:
+
+```bash
+curl -X PUT http://localhost:8787/api/auth/admin/identities/{identity-id} \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schema_id": "default",
+    "traits": {
+      "email": "user@example.com",
+      "name": "Alice Smith"
+    },
+    "metadata_public": {
+      "avatar_url": "https://...",
+      "role": "admin"
+    }
+  }'
+```
+
+---
+
+## Step 3: Migrate Storage
+
+Both Supabase Storage and Truss Storage (MinIO) are S3-compatible. Use the AWS CLI to sync files.
+
+### Configure AWS CLI for both services
+
+```bash
+# Supabase S3 credentials (from Supabase dashboard > Settings > Storage)
+export SUPABASE_S3_ENDPOINT="https://[ref].supabase.co/storage/v1/s3"
+export SUPABASE_ACCESS_KEY="your-supabase-access-key"
+export SUPABASE_SECRET_KEY="your-supabase-secret-key"
+
+# Truss MinIO credentials (from your .env or Truss dashboard > Storage)
+export TRUSS_S3_ENDPOINT="http://your-truss-host:9000"
+export TRUSS_ACCESS_KEY="your-minio-access-key"
+export TRUSS_SECRET_KEY="your-minio-secret-key"
+```
+
+### Sync files
+
+```bash
+# Download from Supabase
+aws s3 sync \
+  s3://your-bucket/ ./supabase-files/ \
+  --endpoint-url "$SUPABASE_S3_ENDPOINT" \
+  --profile supabase
+
+# Create the bucket in Truss MinIO
+aws s3 mb s3://your-bucket \
+  --endpoint-url "$TRUSS_S3_ENDPOINT" \
+  --profile truss
+
+# Upload to Truss
+aws s3 sync \
+  ./supabase-files/ s3://your-bucket/ \
+  --endpoint-url "$TRUSS_S3_ENDPOINT" \
+  --profile truss
+```
+
+Configure AWS CLI profiles in `~/.aws/credentials`:
+
+```ini
+[supabase]
+aws_access_key_id = your-supabase-access-key
+aws_secret_access_key = your-supabase-secret-key
+
+[truss]
+aws_access_key_id = your-minio-access-key
+aws_secret_access_key = your-minio-secret-key
+```
+
+### Update storage references
+
+If your application stores file URLs, update them to point to Truss:
+
+```sql
+-- Example: update a column that stores file URLs
+UPDATE profiles
+SET avatar_url = REPLACE(
+  avatar_url,
+  'https://[ref].supabase.co/storage/v1/object/public/',
+  'http://your-truss-host:9000/'
+);
+```
+
+---
+
+## Step 4: Row-Level Security
+
+Supabase RLS policies are standard PostgreSQL. They transfer directly to Truss with no changes.
+
+After importing your database (Step 1), verify your policies are intact:
+
+```sql
+SELECT schemaname, tablename, policyname, cmd, qual
+FROM pg_policies
+WHERE schemaname = 'public'
+ORDER BY tablename, policyname;
+```
+
+**One difference:** Supabase provides helper functions like `auth.uid()` and `auth.role()` that reference the JWT claims of the current request. These functions do not exist in Truss. You have two options:
+
+1. **Create equivalent functions** that read from a session variable:
+
+```sql
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS $$
+  SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid;
+$$ LANGUAGE sql STABLE;
+```
+
+2. **Rewrite policies** to use standard PostgreSQL session variables or role-based checks.
+
+---
+
+## Step 5: Realtime
+
+Supabase Realtime uses a custom protocol over WebSocket with channel subscriptions. Truss Realtime uses PostgreSQL LISTEN/NOTIFY with a simpler WebSocket API.
+
+### Supabase (before)
+
+```javascript
+import { createClient } from '@supabase/supabase-js';
+const supabase = createClient(url, key);
+
+supabase
+  .channel('messages')
+  .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
+    console.log('New message:', payload.new);
+  })
+  .subscribe();
+```
+
+### Truss (after)
+
+First, subscribe to the table via API or dashboard:
+
+```bash
+curl -X POST http://localhost:8787/api/realtime/subscribe \
+  -H "Content-Type: application/json" \
+  -d '{"schema": "public", "table": "messages"}'
+```
+
+Then connect via WebSocket:
+
+```javascript
+const ws = new WebSocket('ws://your-truss-host:8787/realtime');
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  if (data.table === 'messages' && data.operation === 'INSERT') {
+    console.log('New message:', data.row);
+  }
+};
+```
+
+See the [Realtime](./realtime/) guide for the full API reference and client examples.
+
+---
+
+## Step 6: Edge Functions
+
+Supabase Edge Functions (Deno Deploy) are not directly supported in Truss. Alternatives:
+
+| Pattern | Truss equivalent |
+|---------|-----------------|
+| HTTP-triggered functions | [Webhooks](./webhooks/) — trigger HTTP calls on database events |
+| Scheduled functions | External cron (e.g., GitHub Actions, cron job) calling the Truss API |
+| Background processing | Webhooks + your own worker service |
+| Custom API endpoints | Deploy your own Express/Fastify/Hono service alongside Truss |
+
+If you have edge functions that respond to database changes, webhooks are the closest replacement. Configure them in the Truss dashboard under **Webhooks** to fire on INSERT, UPDATE, or DELETE events.
+
+---
+
+## Step 7: Update Application Code
+
+### Replace the Supabase client
+
+Remove the Supabase JS client and use the Truss Client API or direct PostgreSQL connections:
+
+```bash
+npm uninstall @supabase/supabase-js
+```
+
+For database queries, use an ORM like [Drizzle](./drizzle/) or [Prisma](./prisma/), or connect directly with `pg` / `postgres`.
+
+For auth, storage, and realtime, use the Truss REST API. See the [REST API](../api-reference/rest-api/) and [Client SDK](../api-reference/client-sdk/) references.
+
+### Environment variables
+
+Replace Supabase environment variables:
+
+```bash
+# Before (Supabase)
+SUPABASE_URL=https://[ref].supabase.co
+SUPABASE_ANON_KEY=eyJ...
+SUPABASE_SERVICE_ROLE_KEY=eyJ...
+
+# After (Truss)
+DATABASE_URL=postgresql://postgres:password@your-truss-host:5432/truss
+TRUSS_API_URL=http://your-truss-host:8787
+TRUSS_API_KEY=your-truss-api-key
+MINIO_ENDPOINT=http://your-truss-host:9000
+```
+
+---
+
+## Migration Checklist
+
+- [ ] Export database with `pg_dump` (excluding Supabase internal schemas)
+- [ ] Import into Truss with `psql` or Migration API
+- [ ] Verify tables, indexes, and extensions
+- [ ] Export auth users and import into Kratos
+- [ ] Send password reset emails to migrated users
+- [ ] Sync storage files via `aws s3 sync`
+- [ ] Update file URL references in the database
+- [ ] Verify RLS policies (replace `auth.uid()` if used)
+- [ ] Set up realtime subscriptions for needed tables
+- [ ] Replace edge functions with webhooks or external services
+- [ ] Update application code to use Truss APIs
+- [ ] Update environment variables
+- [ ] Run integration tests against the Truss instance
