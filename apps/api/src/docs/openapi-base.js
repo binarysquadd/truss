@@ -70,6 +70,7 @@ export const openApiBase = {
     { name: "FDW", description: "Foreign Data Wrapper management" },
     { name: "Partitioning", description: "Table partitioning advisor" },
     { name: "Feature Flags", description: "Feature flag management, targeting, segments, and evaluation via flagd. Flag and segment creation is subject to plan quotas — exceeding your plan limit returns 403 QUOTA_EXCEEDED. Purchase +Flags or +Segments booster packs to raise limits." },
+    { name: "Cache / KV", description: "Redis-compatible cache / key-value store (Valkey) — browse the keyspace (SCAN), get/set/delete keys with TTL, view server stats. Flush is admin-only." },
     { name: "Extensions", description: "PostgreSQL extension management — enable/disable 33 curated extensions" },
     { name: "Public", description: "Unauthenticated public endpoints (waitlist, etc.)" },
   ],
@@ -6206,6 +6207,74 @@ export const openApiBase = {
           401: noSession,
           500: noDb,
         },
+      },
+    },
+
+    "/api/cache/status": {
+      get: {
+        tags: ["Cache / KV"],
+        summary: "Cache health + headline stats",
+        description: "Valkey reachability, version, key count, memory, hit/miss counters.",
+        security: [{ SessionAuth: [] }],
+        responses: { 200: ok("Cache status"), 401: noSession },
+      },
+    },
+    "/api/cache/info": {
+      get: {
+        tags: ["Cache / KV"],
+        summary: "Full parsed INFO",
+        description: "Parsed Valkey INFO output grouped by section.",
+        security: [{ SessionAuth: [] }],
+        responses: { 200: ok("Parsed INFO"), 401: noSession, 503: err("Cache unavailable") },
+      },
+    },
+    "/api/cache/keys": {
+      get: {
+        tags: ["Cache / KV"],
+        summary: "Scan keys",
+        description: "Cursor-based SCAN of the keyspace (never the blocking KEYS). Returns keys with type + TTL.",
+        security: [{ SessionAuth: [] }],
+        parameters: [
+          { name: "pattern", in: "query", schema: { type: "string", default: "*" } },
+          { name: "cursor", in: "query", schema: { type: "string", default: "0" } },
+          { name: "count", in: "query", schema: { type: "integer", default: 100 } },
+        ],
+        responses: { 200: ok("Keys page + next cursor"), 401: noSession, 503: err("Cache unavailable") },
+      },
+    },
+    "/api/cache/keys/{key}": {
+      get: {
+        tags: ["Cache / KV"],
+        summary: "Get a key",
+        description: "Value (string/list/set/hash/zset) with type + TTL.",
+        security: [{ SessionAuth: [] }],
+        parameters: [{ name: "key", in: "path", required: true, schema: { type: "string" } }],
+        responses: { 200: ok("Key value"), 401: noSession, 404: err("Key not found"), 503: err("Cache unavailable") },
+      },
+      put: {
+        tags: ["Cache / KV"],
+        summary: "Set a key",
+        description: "Set a string value with an optional TTL (seconds).",
+        security: [{ SessionAuth: [] }],
+        parameters: [{ name: "key", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["value"], properties: { value: { type: "string" }, ttl: { type: "integer", description: "TTL in seconds (optional)" } } } } } },
+        responses: { 200: ok("Set"), 400: err("value required"), 401: noSession, 503: err("Cache unavailable") },
+      },
+      delete: {
+        tags: ["Cache / KV"],
+        summary: "Delete a key",
+        security: [{ SessionAuth: [] }],
+        parameters: [{ name: "key", in: "path", required: true, schema: { type: "string" } }],
+        responses: { 200: ok("Deleted"), 401: noSession, 503: err("Cache unavailable") },
+      },
+    },
+    "/api/cache/flush": {
+      post: {
+        tags: ["Cache / KV"],
+        summary: "Flush the keyspace (admin)",
+        description: "Wipes all keys. Destructive — admin only.",
+        security: [{ SessionAuth: [] }],
+        responses: { 200: ok("Flushed"), 401: noSession, 403: adminOnly, 503: err("Cache unavailable") },
       },
     },
 

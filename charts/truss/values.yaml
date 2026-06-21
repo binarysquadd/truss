@@ -21,6 +21,7 @@ images:
   oathkeeper: oryd/oathkeeper:v0.40.7
   minio: minio/minio:RELEASE.2024-09-22T00-33-43Z   # pin to a real digest/tag before release
   flagd: ghcr.io/open-feature/flagd:v0.11.1
+  valkey: valkey/valkey:8-alpine
   pullPolicy: IfNotPresent
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -43,6 +44,7 @@ secrets:
   kratosCookieSecret: "change-me-cookie-secret-32chars!"
   kratosCipherSecret: "change-me-cipher-secret-32chars!"
   hydraSystemSecret: "change-me-hydra-system-secret-32chars-min"   # openssl rand -hex 16
+  valkeyPassword: "change-me-valkey-password"   # openssl rand -hex 16
 
 postgres:
   storage: 5Gi
@@ -58,6 +60,11 @@ corsAllowedOrigins: "http://localhost:3000"
 # dashboard's Authentication panel, set it here, and `helm upgrade`. Empty = no
 # admins (everyone gets read/write, nobody gets the admin-gated surfaces).
 adminIdentityIds: ""
+
+# First-boot default admin: seeded only if no account exists yet, so you can log in
+# right after install. The password is generated + printed to the API logs on first
+# boot (`kubectl -n truss logs deploy/truss-api`) — change it after first login.
+bootstrapAdminEmail: "admin@truss.local"
 
 resources:
   small: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 500m, memory: 256Mi } }

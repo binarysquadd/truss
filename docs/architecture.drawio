@@ -1,12 +1,12 @@
 <mxfile host="truss" type="device">
   <diagram name="Architecture" id="truss-arch">
-    <mxGraphModel dx="1240" dy="640" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1220" pageHeight="580" math="0" shadow="0">
+    <mxGraphModel dx="1240" dy="640" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1220" pageHeight="638" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
 
         <mxCell id="bg" value="" style="rounded=0;html=1;fillColor=#faf9f6;strokeColor=none;" vertex="1" parent="1">
-          <mxGeometry x="0" y="0" width="1220" height="580" as="geometry" />
+          <mxGeometry x="0" y="0" width="1220" height="638" as="geometry" />
         </mxCell>
 
         <mxCell id="title" value="Truss — one dashboard over your own backend" style="text;html=1;align=left;verticalAlign=middle;fontColor=#1a1a1a;fontSize=22;fontStyle=1;" vertex="1" parent="1">
@@ -14,17 +14,17 @@
         </mxCell>
 
         <mxCell id="browser" value="Browser" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#ddd9d0;fontColor=#374151;fontSize=14;" vertex="1" parent="1">
-          <mxGeometry x="44" y="286" width="120" height="50" as="geometry" />
+          <mxGeometry x="44" y="319" width="120" height="50" as="geometry" />
         </mxCell>
         <mxCell id="dashboard" value="Dashboard" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff1f2;strokeColor=#9f1239;fontColor=#9f1239;fontSize=14;" vertex="1" parent="1">
-          <mxGeometry x="214" y="286" width="150" height="50" as="geometry" />
+          <mxGeometry x="214" y="319" width="150" height="50" as="geometry" />
         </mxCell>
         <mxCell id="api" value="API" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff1f2;strokeColor=#9f1239;fontColor=#9f1239;fontSize=14;" vertex="1" parent="1">
-          <mxGeometry x="444" y="286" width="150" height="50" as="geometry" />
+          <mxGeometry x="444" y="319" width="150" height="50" as="geometry" />
         </mxCell>
 
         <mxCell id="svc" value="Backing services" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3f1ec;strokeColor=#ddd9d0;fontColor=#1a1a1a;verticalAlign=top;align=center;spacingTop=12;fontSize=14;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="664" y="80" width="512" height="470" as="geometry" />
+          <mxGeometry x="664" y="80" width="512" height="528" as="geometry" />
         </mxCell>
         <mxCell id="pg" value="PostgreSQL — Database" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;fillColor=#fff7ed;strokeColor=#d97706;fontColor=#9a3412;fontSize=13;" vertex="1" parent="1">
           <mxGeometry x="712" y="140" width="416" height="46" as="geometry" />
@@ -46,6 +46,9 @@
         </mxCell>
         <mxCell id="flagd" value="flagd — Feature Flags" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;fillColor=#ecfeff;strokeColor=#128193;fontColor=#0e6b7b;fontSize=13;" vertex="1" parent="1">
           <mxGeometry x="712" y="488" width="416" height="46" as="geometry" />
+        </mxCell>
+        <mxCell id="valkey" value="Valkey — Cache / KV" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;fillColor=#eef2ff;strokeColor=#6366f1;fontColor=#4338ca;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="712" y="546" width="416" height="46" as="geometry" />
         </mxCell>
 
         <mxCell id="e1" style="html=1;strokeColor=#9ca3af;endArrow=block;rounded=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="browser" target="dashboard">

@@ -11,6 +11,7 @@ import { sendWelcomeEmail } from "../lib/email.js";
 import { invalidateSessionCache } from "../lib/session.js";
 import { clearCsrfCookie } from "../lib/csrf.js";
 import { validate } from "../lib/validate.js";
+import { decideCookieSecure } from "../lib/config-helpers.js";
 import logger from "../lib/logger.js";
 import { logSecurityEvent } from "../lib/observability.js";
 import { createRequire } from "node:module";
@@ -54,6 +55,18 @@ const TRUSS_SESSION_COOKIE = "truss_session";
 const IS_CROSS_ORIGIN = Boolean(process.env.CORS_ALLOWED_ORIGINS);
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
+// Whether to mark the session cookie `Secure`. Secure cookies are only sent over
+// HTTPS, so forcing it on a plain-HTTP self-host (e.g. http://localhost:3000) makes
+// the browser silently drop the cookie and login never sticks. Decide it from the
+// real public URL scheme, with an explicit COOKIE_SECURE override, falling back to
+// NODE_ENV only when no public URL is configured (preserves old behavior).
+const PUBLIC_URL = (process.env.TRUSS_PUBLIC_URL || process.env.PUBLIC_URL || "").trim();
+const COOKIE_SECURE = decideCookieSecure({
+  cookieSecureEnv: process.env.COOKIE_SECURE,
+  publicUrl: PUBLIC_URL,
+  isProduction: IS_PRODUCTION,
+});
+
 // Cookie Domain attribute — ONLY set when COOKIE_DOMAIN is explicitly configured.
 // Default is host-only (no Domain attribute), the safe self-hosted default. Setting a
 // parent registrable domain (e.g. .parent.tld) would scope the session/CSRF cookie to
@@ -68,7 +81,7 @@ const COOKIE_OPTS = (IS_CROSS_ORIGIN && COOKIE_DOMAIN)
   ? `; HttpOnly; Path=/; SameSite=None; Secure${COOKIE_DOMAIN}; Max-Age=${60 * 60 * 24 * 30}`
   : IS_CROSS_ORIGIN
     ? `; HttpOnly; Path=/; SameSite=None; Secure; Max-Age=${60 * 60 * 24 * 30}`
-    : `; HttpOnly; Path=/; SameSite=Lax${IS_PRODUCTION ? "; Secure" : ""}; Max-Age=${60 * 60 * 24 * 30}`;
+    : `; HttpOnly; Path=/; SameSite=Lax${COOKIE_SECURE ? "; Secure" : ""}; Max-Age=${60 * 60 * 24 * 30}`;
 
 function setSessionCookie(res, token) {
   res.setHeader("set-cookie", `${TRUSS_SESSION_COOKIE}=${token}${COOKIE_OPTS}`);
@@ -78,7 +91,7 @@ function clearSessionCookie(res) {
   // Production always gets Secure flag; cross-origin needs SameSite=None + Secure; dev same-origin has no Secure
   const clearOpts = IS_CROSS_ORIGIN
     ? `; HttpOnly; Path=/; SameSite=None; Secure${COOKIE_DOMAIN}; Max-Age=0`
-    : `; HttpOnly; Path=/; SameSite=Lax${IS_PRODUCTION ? "; Secure" : ""}; Max-Age=0`;
+    : `; HttpOnly; Path=/; SameSite=Lax${COOKIE_SECURE ? "; Secure" : ""}; Max-Age=0`;
   res.setHeader("set-cookie", `${TRUSS_SESSION_COOKIE}=${clearOpts}`);
 }
 
@@ -258,7 +271,7 @@ router.post("/api/auth/login", validate(loginSchema), async (req, res) => {
   if (!AUTH_REQUIRED) {
     res.clearCookie("truss_logged_out", { path: "/" });
     setSessionCookie(res, "dev-session-token");
-    return res.json({ session_token: "dev-session-token", session: { identity: { traits: { email: "dev@localhost" } } } });
+    return res.json({ authenticated: true, session: { identity: { traits: { email: "dev@localhost" } } } });
   }
   try {
     const { flowId, ...body } = req.body;
@@ -282,6 +295,8 @@ router.post("/api/auth/login", validate(loginSchema), async (req, res) => {
 
     log.info({ email: data.session?.identity?.traits?.email }, "user logged in");
     // Don't echo the session token in the body — the HttpOnly cookie is the auth mechanism.
+    // Signal success with a non-secret boolean so the client knows a session was set.
+    data.authenticated = Boolean(data.session_token);
     delete data.session_token;
     res.json(data);
   } catch (err) {
@@ -407,6 +422,7 @@ router.post("/api/auth/login/passkey", async (req, res) => {
 
     log.info({ email: data.session?.identity?.traits?.email }, "user logged in via passkey");
     // Don't echo the session token in the body — the HttpOnly cookie is the auth mechanism.
+    data.authenticated = Boolean(data.session_token);
     delete data.session_token;
     return res.json(data);
   } catch (err) {
@@ -436,7 +452,7 @@ router.post("/api/auth/register", validate(registerSchema), async (req, res) => 
   // Dev mode: skip Kratos, return success with dev session
   if (!AUTH_REQUIRED) {
     setSessionCookie(res, "dev-session-token");
-    return res.json({ session_token: "dev-session-token", session: { identity: { traits: { email: "dev@localhost" } } } });
+    return res.json({ authenticated: true, session: { identity: { traits: { email: "dev@localhost" } } } });
   }
 
   // ─── Disposable email gate ───
@@ -481,6 +497,7 @@ router.post("/api/auth/register", validate(registerSchema), async (req, res) => 
     }
 
     // Don't echo the session token in the body — the HttpOnly cookie is the auth mechanism.
+    data.authenticated = Boolean(data.session_token);
     delete data.session_token;
     res.json(data);
   } catch (err) {

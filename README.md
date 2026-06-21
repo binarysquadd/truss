@@ -10,7 +10,7 @@ Supabase/Appwrite-style backend you fully own.
 > multi-tenant **Truss Cloud** (provisioning, metering, billing) is a separate hosted service.
 
 <p align="center">
-  <img alt="Truss architecture: browser → dashboard → API → backing services (Postgres, Ory Kratos/Keto/Hydra, MinIO, flagd)" src="docs/architecture.png" width="820">
+  <img alt="Truss architecture: browser → dashboard → API → backing services (Postgres, Ory Kratos/Keto/Hydra/Oathkeeper, MinIO, Valkey, flagd)" src="docs/architecture.png" width="820">
 </p>
 
 ## What's inside
@@ -20,12 +20,13 @@ Supabase/Appwrite-style backend you fully own.
 - **Authorization** — fine-grained, relation-based permissions / RBAC (Ory Keto).
 - **OAuth2 / OIDC** — be your own identity provider (Ory Hydra).
 - **Storage** — S3-compatible buckets, presigned up/downloads (MinIO).
+- **Cache / KV** — Redis-compatible in-memory cache, sessions, rate-limit counters (Valkey).
 - **Plus** — realtime subscriptions, webhooks, database branching, backups/PITR, a client API surface, feature flags.
 
 ## Quickstart (self-host)
 
-The whole stack — Postgres, Kratos (auth), Keto (authz), MinIO (storage), flagd, the API,
-and the dashboard — comes up from one command. Two supported paths:
+The whole stack — Postgres, Kratos (auth), Keto (authz), MinIO (storage), Valkey (cache),
+flagd, the API, and the dashboard — comes up from one command. Two supported paths:
 
 **Kubernetes (umbrella Helm chart)** — one `helm install`, no operators required:
 
@@ -33,9 +34,17 @@ and the dashboard — comes up from one command. Two supported paths:
 helm install truss ./charts/truss -n truss --create-namespace \
   --set secrets.encryptionKey=$(openssl rand -hex 32) \
   --set secrets.dbPassword=$(openssl rand -hex 16) \
-  --set secrets.minioSecretKey=$(openssl rand -hex 16)
+  --set secrets.minioSecretKey=$(openssl rand -hex 16) \
+  --set secrets.valkeyPassword=$(openssl rand -hex 16)
 # then: kubectl -n truss port-forward svc/truss-dashboard 3000:80  → http://localhost:3000
 ```
+
+**First login:** on first boot Truss seeds a default admin (`admin@truss.local`) so you
+can sign in right away. The password is printed once to the API logs:
+`kubectl -n truss logs deploy/truss-api | grep "Default admin"` (Compose:
+`docker compose logs truss-api | grep "Default admin"`). Change it immediately under
+**Settings → Account**. Set `TRUSS_BOOTSTRAP_ADMIN_PASSWORD` for known creds, or
+`TRUSS_BOOTSTRAP_ADMIN=false` to disable seeding and register the first user yourself.
 
 Images are published at `ghcr.io/binarysquadd/truss-{api,dashboard}` (override `images.*`
 to pin/replace). For production, set `publicUrl` + `corsAllowedOrigins` and front it with TLS.

@@ -329,7 +329,8 @@ Powered by Ory Oathkeeper. Competes with: Kong, Traefik, NGINX, Cloudflare Acces
 
 | Feature | Details |
 |---------|---------|
-| Docker Compose deployment | Full-stack `docker-compose.selfhosted.yml` with Postgres, Kratos, Keto, MinIO, API, and dashboard |
+| Docker Compose deployment | Full-stack `docker-compose.selfhosted.yml` with Postgres, Kratos, Keto, Hydra, Oathkeeper, MinIO, Valkey, flagd, API, and dashboard |
+| Cache / KV (Valkey) | Redis-compatible in-memory cache, sessions, rate-limit counters; keyspace browser + stats in the dashboard, `/api/cache/*` API |
 | Single-command setup | `docker compose up` -- auto-bootstraps org, project, and API key on first boot |
 | Runtime mode flag | Same codebase for SaaS and self-hosted (`TRUSS_SELF_HOSTED=true` skips billing, quotas, multi-tenant) |
 

@@ -59,7 +59,7 @@ function makeDemoTenant(_ip) {
 }
 
 // ─── Demo rate limiter: 100 requests per IP per hour ───
-const DEMO_RATE_LIMIT = 100;
+const DEMO_RATE_LIMIT = Number(process.env.DEMO_RATE_LIMIT) || 100;
 const DEMO_RATE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 const demoRateLimits = new Map(); // IP -> { count, resetAt }
 
@@ -133,7 +133,7 @@ export async function verifySession(req) {
 
     if (result.rows.length === 0) {
       // Auto-provision tenant on first login. Single-instance core has no plans/trials.
-      const isAdmin = ADMIN_IDENTITY_IDS.includes(identityId);
+      const isAdmin = ADMIN_IDENTITY_IDS.includes(identityId) || session.identity?.metadata_public?.truss_admin === true;
       const initialPlan = "business";
       result = await pool.query(
         `INSERT INTO truss_internal.tenants (identity_id, email, display_name, is_admin, plan)
@@ -166,7 +166,7 @@ export async function verifySession(req) {
       email: tenant.email,
       displayName: tenant.display_name,
       plan: tenant.plan,
-      isAdmin: tenant.is_admin || ADMIN_IDENTITY_IDS.includes(tenant.identity_id),
+      isAdmin: tenant.is_admin || ADMIN_IDENTITY_IDS.includes(tenant.identity_id) || session.identity?.metadata_public?.truss_admin === true,
     };
 
     // Cache

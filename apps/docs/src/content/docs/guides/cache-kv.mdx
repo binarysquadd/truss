@@ -1,0 +1,85 @@
+---
+title: Cache / KV
+description: A Redis-compatible in-memory cache and key/value store powered by Valkey — caching, sessions, and rate-limit counters out of the box.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Truss ships a Redis-compatible cache / key-value store powered by [Valkey](https://valkey.io/)
+(the Linux Foundation's open-source Redis fork). Use it for caching expensive queries,
+session storage, rate-limit counters, and any ephemeral key/value data. Browse and edit the
+keyspace from the **Cache** panel, or connect any Redis client from your app.
+
+## Architecture
+
+```
+your app ──┐
+           ├─► Truss API ──► Valkey (truss-valkey:6379)
+dashboard ─┘     /api/cache/*        in-memory KV
+```
+
+The Cache panel talks to the API's `/api/cache/*` routes (keyspace scan, get/set/delete,
+TTL, stats). Your application connects to Valkey **directly** with any Redis client for the
+hot path — the dashboard is for inspection and management, not a proxy.
+
+Valkey runs as an **ephemeral cache** by default (persistence off) — a restart starts with
+an empty keyspace, which is the right default for a cache. Flip persistence on in the chart
+if you need durability.
+
+## Setup
+
+The self-hosted stack (Helm + Compose) wires Valkey automatically. The API reads:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `VALKEY_HOST` | Valkey hostname | `localhost` |
+| `VALKEY_PORT` | Valkey port | `6379` |
+| `VALKEY_PASSWORD` | `requirepass` value (empty = no auth) | — |
+| `VALKEY_URL` | Full `redis://` URL (overrides the above) | — |
+
+## Using the Cache panel
+
+- **Keyspace** — scan keys by pattern (e.g. `session:*`), see each key's type + TTL, set a
+  new key (with optional TTL), inspect a value, or delete a key. Scanning uses `SCAN` (never
+  the blocking `KEYS`), so it's safe on large keyspaces.
+- **Stats** — server `INFO`: version, memory, connected clients, keyspace hit/miss counters.
+- **Developer** — copy-paste client snippets.
+
+Flushing the whole keyspace is **admin-only**.
+
+## From your app
+
+<Tabs>
+<TabItem label="Node (ioredis)">
+```javascript
+import Redis from "ioredis";
+const cache = new Redis({ host: "truss-valkey", port: 6379, password: process.env.VALKEY_PASSWORD });
+
+await cache.set("session:42", JSON.stringify(user), "EX", 3600); // 1h TTL
+const user = JSON.parse(await cache.get("session:42"));
+```
+</TabItem>
+<TabItem label="valkey-cli">
+```bash
+valkey-cli -a "$VALKEY_PASSWORD" SET ratelimit:ip:1.2.3.4 1 EX 60
+valkey-cli -a "$VALKEY_PASSWORD" INCR ratelimit:ip:1.2.3.4
+```
+</TabItem>
+<TabItem label="REST (via Truss API)">
+```bash
+# set a key with a 1h TTL
+curl -X PUT https://your-truss/api/cache/keys/session:42 \
+  -H "content-type: application/json" \
+  -d '{"value":"...","ttl":3600}'
+
+# scan the keyspace
+curl "https://your-truss/api/cache/keys?pattern=session:*"
+```
+</TabItem>
+</Tabs>
+
+## Notes
+
+- Single-instance core uses the whole keyspace. (Truss Cloud namespaces keys per tenant.)
+- An unreachable Valkey degrades gracefully — the Cache panel reports "unavailable" and the
+  rest of Truss keeps working.
