@@ -20,7 +20,9 @@ describe("SQL Injection Prevention", () => {
   });
 
   it("blocks UNION-based injection against pg_shadow", async () => {
-    const res = await demoApi("/api/sql/query", {
+    // Non-demo (admin): demo write-protection would 403 before the SQL runs. Here the
+    // read-only UNION reaches Postgres, where pg_shadow requires superuser and errors.
+    const res = await api("/api/sql/query", {
       method: "POST",
       json: { sql: "SELECT 1 UNION SELECT usename, passwd FROM pg_shadow" },
     });

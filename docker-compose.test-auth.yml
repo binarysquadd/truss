@@ -1,0 +1,20 @@
+# Auth-required test override. Layer ON TOP of the dev test override:
+#   -f docker-compose.selfhosted.yml -f docker-compose.test.yml -f docker-compose.test-auth.yml
+#
+# Flips the API back into production-like auth mode so the real login path is
+# exercised: Kratos session, the HttpOnly cookie, first-boot admin seeding, and
+# the isAdmin gate. This is the path that hid this week's three login bugs from
+# the dev-mode-only suite.
+services:
+  truss-api:
+    environment:
+      NODE_ENV: "production"
+      TRUSS_AUTH_REQUIRED: "true"
+      TRUSS_DEV_MODE: "false"
+      TRUSS_DEMO_MODE: "false"
+      # Known password so the test can log in. Public URL stays http:// so the
+      # session cookie is not marked Secure (it would be dropped over plain HTTP).
+      TRUSS_BOOTSTRAP_ADMIN_EMAIL: "admin@truss.local"
+      TRUSS_BOOTSTRAP_ADMIN_PASSWORD: "TestAdmin123!"
+      TRUSS_PUBLIC_URL: "http://localhost:8788"
+      TRUSS_DISABLE_RATE_LIMIT: "true"

@@ -1,0 +1,49 @@
+# Test harness — an override layered on docker-compose.selfhosted.yml.
+#
+# Why an override and not a standalone file: the Ory service configs (Kratos alone
+# is ~140 lines) live inline in the self-hosted compose. Reusing them here means the
+# test stack can never drift from the real one.
+#
+# It runs the SAME stack under an isolated Compose project (truss-test) on alternate
+# host ports, so it coexists with a manually running self-hosted stack, and flips the
+# API into dev/test mode (auth off, demo on) so the integration smoke suite can run.
+#
+# Driven by the Makefile: `make test-deps`, `make test-int`, `make test-e2e`, `make test-down`.
+# Backing services talk to each other over the internal Docker network (unchanged);
+# only the host-exposed ports are remapped below.
+
+services:
+  truss-api:
+    environment:
+      # Dev/test mode: no auth gate + demo data, which is what the existing
+      # demoApi smoke tests expect. Auth-required runs come in Phase 3.
+      # NODE_ENV must NOT be production: the API force-enables auth in production
+      # even when TRUSS_AUTH_REQUIRED=false (a safety guard).
+      NODE_ENV: "development"
+      TRUSS_AUTH_REQUIRED: "false"
+      TRUSS_DEV_MODE: "true"
+      TRUSS_DEMO_MODE: "true"
+      # The full smoke suite fires hundreds of requests from one IP; disable the
+      # API rate limiters and lift the demo limit so a complete run does not 429.
+      DEMO_RATE_LIMIT: "100000"
+      TRUSS_DISABLE_RATE_LIMIT: "true"
+    # `!override` REPLACES the base port list instead of appending to it, so these
+    # remapped ports do not collide with a running self-hosted stack.
+    ports: !override
+      - "8788:8787"   # host:container — 8788 avoids clashing with a local dev API on 8787
+
+  truss-dashboard:
+    ports: !override
+      - "3001:80"     # 3001 avoids clashing with the self-hosted dashboard on 3000
+
+  # Expose Postgres so the fresh-DB test can assert the truss_internal schema directly.
+  postgres:
+    ports:
+      - "55432:5432"
+
+  # Hydra exposes 4444 in the base file; remap so the test stack does not fight a
+  # running self-hosted Hydra. Nothing on the host needs it (the API reaches Hydra
+  # over the internal network).
+  hydra:
+    ports: !override
+      - "14444:4444"

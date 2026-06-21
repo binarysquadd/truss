@@ -102,31 +102,8 @@ describe("Storage Module", () => {
   });
 });
 
-describe("Billing Module", () => {
-  it("GET /api/billing/summary — returns usage summary", async () => {
-    const res = await demoApi("/api/billing/summary");
-    assertStatus(res, 200, "billing summary");
-    assert(res.data, "Should return billing data");
-  });
-
-  it("GET /api/billing/usage — returns usage metrics", async () => {
-    const res = await demoApi("/api/billing/usage");
-    assertStatus(res, 200, "billing usage");
-  });
-
-  it("GET /api/billing/trial-status — returns trial info", async () => {
-    const res = await demoApi("/api/billing/trial-status");
-    assertStatus(res, 200, "trial status");
-    assert("on_trial" in res.data, "Should have on_trial field");
-  });
-
-  it("GET /api/billing/plan — returns current plan", async () => {
-    const res = await demoApi("/api/billing/plan");
-    assertStatus(res, 200, "current plan");
-    assert(res.data?.plan, "Should have plan object");
-    assert(res.data?.plans, "Should have plans catalog");
-  });
-});
+// NOTE: the Billing module (summary/usage/trial-status/plan) is a truss-cloud feature,
+// removed from the OSS core de-cloud, so it is not tested here.
 
 describe("Branches & Backups", () => {
   it("GET /api/branches — returns branch list", async () => {

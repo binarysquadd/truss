@@ -32,7 +32,8 @@ describe("Storage CRUD", () => {
 
   it("GET /api/storage/buckets/:name/objects — list objects", async () => {
     const res = await demoApi("/api/storage/buckets/test/objects");
-    assert([200, 400, 404, 503].includes(res.status), `Expected 200/400/404/503, got ${res.status}`);
+    // 403 when the bucket does not exist / access denied (no bucket seeded here).
+    assert([200, 400, 403, 404, 503].includes(res.status), `Expected 200/400/403/404/503, got ${res.status}`);
   });
 });
 
@@ -180,27 +181,8 @@ describe("Settings Endpoints", () => {
     assert(res.status !== 500, `Should not 500`);
   });
 
-  it("GET /api/billing/plan — current plan", async () => {
-    const res = await demoApi("/api/billing/plan");
-    assertStatus(res, 200);
-  });
-
-  it("GET /api/billing/usage — usage metrics", async () => {
-    const res = await demoApi("/api/billing/usage");
-    assertStatus(res, 200);
-  });
-
-  it("GET /api/billing/trial-status", async () => {
-    const res = await demoApi("/api/billing/trial-status");
-    assertStatus(res, 200);
-  });
-});
-
-describe("Audit & Logs", () => {
-  it("GET /api/audit-logs", async () => {
-    const res = await demoApi("/api/audit-logs");
-    assertStatus(res, 200);
-  });
+  // Billing (plan/usage/trial-status) and audit-logs are truss-cloud features,
+  // removed from the OSS core de-cloud, so they are not tested here.
 });
 
 describe("Performance & Advisors", () => {
@@ -272,38 +254,9 @@ describe("Ory Service Health", () => {
   });
 });
 
-describe("Auth Admin Endpoints", () => {
-  it("GET /api/auth/identities — list identities (admin or dev mode)", async () => {
-    const res = await demoApi("/api/auth/identities");
-    // Admin endpoint — 200 in dev mode (admin), 403 in demo
-    assert([200, 403].includes(res.status), `got ${res.status}`);
-  });
-
-  it("GET /api/auth/sessions — list sessions", async () => {
-    const res = await demoApi("/api/auth/sessions");
-    assert([200, 403].includes(res.status), `got ${res.status}`);
-  });
-
-  it("GET /api/auth/providers — list auth providers", async () => {
-    const res = await demoApi("/api/auth/providers");
-    assert([200, 403].includes(res.status), `got ${res.status}`);
-  });
-
-  it("GET /api/auth/schemas — list identity schemas", async () => {
-    const res = await demoApi("/api/auth/schemas");
-    assert([200, 403].includes(res.status), `got ${res.status}`);
-  });
-
-  it("GET /api/auth/login-history", async () => {
-    const res = await demoApi("/api/auth/login-history");
-    assert([200, 403].includes(res.status), `got ${res.status}`);
-  });
-
-  it("GET /api/auth/security-config", async () => {
-    const res = await demoApi("/api/auth/security-config");
-    assert([200, 403].includes(res.status), `got ${res.status}`);
-  });
-});
+// NOTE: the auth-admin panel endpoints (identities, sessions, providers, schemas,
+// login-history, security-config) are truss-cloud features removed from the OSS core
+// de-cloud, so they are not tested here.
 
 describe("Database Sub-Features", () => {
   it("GET /api/sql/erd — ERD data", async () => {
@@ -353,10 +306,8 @@ describe("Consumption & Metrics", () => {
     assert(res.status !== 500, `Should not 500`);
   });
 
-  it("GET /api/consumption/history", async () => {
-    const res = await demoApi("/api/consumption/history");
-    assert(res.status !== 500, `Should not 500`);
-  });
+  // /api/consumption/history reads truss_internal.usage_snapshots, a billing-only
+  // (truss-cloud) table not present in OSS core, so it is not tested here.
 
   it("GET /api/metrics/services", async () => {
     const res = await demoApi("/api/metrics/services");

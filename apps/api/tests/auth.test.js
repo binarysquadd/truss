@@ -21,11 +21,6 @@ describe("Authentication — Access Control", () => {
     assert(isDevMode ? res.status === 200 : res.status === 401, `Expected ${isDevMode ? 200 : 401}, got ${res.status}`);
   });
 
-  it("GET /api/billing/summary — requires auth (or succeeds in dev mode)", async () => {
-    const res = await api("/api/billing/summary");
-    assert(isDevMode ? res.status === 200 : res.status === 401, `Expected ${isDevMode ? 200 : 401}, got ${res.status}`);
-  });
-
   it("GET /api/flags — requires auth (or succeeds in dev mode)", async () => {
     const res = await api("/api/flags");
     assert(isDevMode ? res.status === 200 : res.status === 401, `Expected ${isDevMode ? 200 : 401}, got ${res.status}`);
@@ -55,32 +50,8 @@ describe("Authentication — Access Control", () => {
   });
 });
 
-describe("Authentication — Admin Endpoints", () => {
-  it("GET /api/admin/analytics/overview — requires admin (succeeds in dev mode as local dev is admin)", async () => {
-    const res = await api("/api/admin/analytics/overview");
-    // Dev mode: local dev tenant is admin, so 200. Prod: 401/403.
-    assert(res.status === 200 || res.status === 401 || res.status === 403, `Should require admin, got ${res.status}`);
-  });
-
-  it("GET /api/admin/analytics/tenants — requires admin", async () => {
-    const res = await api("/api/admin/analytics/tenants");
-    assert(res.status === 200 || res.status === 401 || res.status === 403, `Should require admin, got ${res.status}`);
-  });
-
-  it("GET /api/admin/waitlist — requires admin", async () => {
-    const res = await api("/api/admin/waitlist");
-    assert(res.status === 200 || res.status === 401 || res.status === 403, `Should require admin, got ${res.status}`);
-  });
-
-  it("POST /api/auth/invite — admin can create invites", async () => {
-    const res = await api("/api/auth/invite", {
-      method: "POST",
-      json: { email: `smoke-test-${Date.now()}@example.com` },
-    });
-    // Dev mode: admin, so 200. Prod without auth: 401/403. May 409 if duplicate.
-    assert([200, 201, 401, 403, 409, 500].includes(res.status), `Expected 200/201/401/403/409, got ${res.status}`);
-  });
-});
+// NOTE: admin analytics, waitlist, and invites are truss-cloud features (removed from
+// the OSS core de-cloud), so they are not tested here.
 
 describe("Authentication — Demo Access", () => {
   it("Demo user can read SQL tables", async () => {
@@ -88,19 +59,9 @@ describe("Authentication — Demo Access", () => {
     assertStatus(res, 200, "demo read access");
   });
 
-  it("Demo user can read billing plans", async () => {
-    const res = await demoApi("/api/billing/plans");
-    assertStatus(res, 200, "demo billing plans");
-  });
-
   it("Demo user can read flags", async () => {
     const res = await demoApi("/api/flags");
     assertStatus(res, 200, "demo flag access");
-  });
-
-  it("Demo user can read audit logs", async () => {
-    const res = await demoApi("/api/audit-logs");
-    assertStatus(res, 200, "demo audit log access");
   });
 
   it("Demo user cannot create projects (or dev mode allows)", async () => {
@@ -112,14 +73,6 @@ describe("Authentication — Demo Access", () => {
     assert(res.status === 403 || res.status === 200, `Expected 403 (demo) or 200 (dev), got ${res.status}`);
   });
 
-  it("Demo user cannot modify billing (or dev mode allows)", async () => {
-    const res = await demoApi("/api/billing/plan", {
-      method: "POST",
-      json: { plan: "starter" },
-    });
-    // 403 in demo mode, 200 in dev mode
-    assert(res.status === 403 || res.status === 200, `Expected 403 (demo) or 200 (dev), got ${res.status}`);
-  });
 });
 
 describe("Client API (/v1/*) — API Key Auth", () => {

@@ -51,26 +51,13 @@ describe("Demo Mode — Data Seeding", () => {
 });
 
 describe("Demo Mode — Read Operations", () => {
-  it("GET /api/billing/summary — returns usage data", async () => {
-    const res = await demoApi("/api/billing/summary");
-    assertStatus(res, 200, "demo billing summary");
-    // Summary has plan info nested under plan or usage
-    assert(res.data?.plan || res.data?.usage || res.data, "Should return billing data");
-  });
-
-  it("GET /api/billing/trial-status — returns trial info", async () => {
-    const res = await demoApi("/api/billing/trial-status");
-    assertStatus(res, 200, "demo trial status");
-    assert("on_trial" in res.data, "Should have on_trial field");
-  });
-
-  it("POST /api/sql/query — executes simple SELECT", async () => {
+  it("POST /api/sql/query — demo blocks the write path (read-only)", async () => {
     const res = await demoApi("/api/sql/query", {
       method: "POST",
       json: { sql: "SELECT 1 AS test_value" },
     });
-    // In demo mode: 200 (SELECT allowed). In dev mode: 200 (admin can do anything)
-    assert(res.status === 200 || res.status === 400, `Expected 200 or 400, got ${res.status}`);
+    // Demo is read-only: all POST is blocked (403). In dev mode admin gets 200.
+    assert(res.status === 403 || res.status === 200, `Expected 403 (demo) or 200 (dev), got ${res.status}`);
   });
 
   it("GET /api/realtime/status — returns realtime info", async () => {
@@ -93,11 +80,6 @@ describe("Demo Mode — Read Operations", () => {
   it("GET /api/vectors/status — returns pgvector status", async () => {
     const res = await demoApi("/api/vectors/status");
     assert(res.status !== 500, "Vectors status should not 500");
-  });
-
-  it("GET /api/audit-logs — returns audit entries", async () => {
-    const res = await demoApi("/api/audit-logs");
-    assertStatus(res, 200, "demo audit logs");
   });
 
   it("GET /api/flags/segments — returns segments", async () => {
