@@ -46,6 +46,7 @@
 | **Ory Hydra** | OAuth2 / OIDC (public :4444, admin :4445, `hydra` schema) |
 | **Ory Oathkeeper** | API Gateway (proxy :4455, admin :4456, stateless) |
 | **MinIO** | S3-compatible object storage (:9000) |
+| **Valkey** | Redis-compatible cache / KV store (:6379, ephemeral by default) |
 | **Cloudflare Pages** | Static hosting for Dashboard, Admin, Docs, WWW |
 
 ---

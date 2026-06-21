@@ -41,6 +41,9 @@ spec:
             - { name: TRUSS_AUTH_REQUIRED, value: "true" }
             - { name: NODE_ENV, value: "production" }
             - { name: API_PORT, value: "8787" }
+            # Drives the session-cookie Secure flag from the URL scheme (http → off so
+            # the cookie survives plain-HTTP/localhost; https → on).
+            - { name: TRUSS_PUBLIC_URL, value: {{ .Values.publicUrl | quote }} }
             - name: DATABASE_URL
               valueFrom: { secretKeyRef: { name: truss-secrets, key: database-url } }
             - name: ENCRYPTION_KEY
@@ -53,6 +56,10 @@ spec:
             - { name: HYDRA_ADMIN_URL, value: "http://truss-hydra:4445" }
             - { name: OATHKEEPER_PROXY_URL, value: "http://truss-oathkeeper:4455" }
             - { name: OATHKEEPER_ADMIN_URL, value: "http://truss-oathkeeper:4456" }
+            - { name: VALKEY_HOST, value: "truss-valkey" }
+            - { name: VALKEY_PORT, value: "6379" }
+            - name: VALKEY_PASSWORD
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: valkey-password } }
             - { name: MINIO_S3_ENDPOINT, value: "http://truss-minio:9000" }
             - name: MINIO_ACCESS_KEY
               valueFrom: { secretKeyRef: { name: truss-secrets, key: minio-access-key } }
@@ -62,6 +69,10 @@ spec:
             - { name: FLAGD_PORT, value: "8013" }
             - { name: CORS_ALLOWED_ORIGINS, value: {{ .Values.corsAllowedOrigins | quote }} }
             - { name: TRUSS_ADMIN_IDENTITY_IDS, value: {{ .Values.adminIdentityIds | quote }} }
+            # First-boot default admin (seeded if no identity exists). Password unset =
+            # a random one is generated + printed to the API logs; read it with
+            # `kubectl -n truss logs deploy/truss-api`. Override via secret if you want.
+            - { name: TRUSS_BOOTSTRAP_ADMIN_EMAIL, value: {{ .Values.bootstrapAdminEmail | quote }} }
           readinessProbe: { httpGet: { path: /api/health, port: 8787 }, initialDelaySeconds: 10, periodSeconds: 10 }
           livenessProbe: { httpGet: { path: /api/health, port: 8787 }, initialDelaySeconds: 30, periodSeconds: 30 }
           resources: {{- toYaml .Values.resources.medium | nindent 12 }}

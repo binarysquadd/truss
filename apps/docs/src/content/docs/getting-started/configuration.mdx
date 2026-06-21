@@ -34,6 +34,31 @@ Required for user authentication. Without these, the dashboard runs in dev mode 
 | `KRATOS_OIDC_PROVIDERS` | Comma-separated social login provider IDs | (none) |
 | `TRUSS_AUTH_REQUIRED` | Require authentication for dashboard | `false` |
 | `TRUSS_ADMIN_IDENTITY_IDS` | Comma-separated Kratos identity UUIDs for admin access | (none) |
+| `TRUSS_BOOTSTRAP_ADMIN` | Seed a default admin on first boot (set `false` to disable) | `true` |
+| `TRUSS_BOOTSTRAP_ADMIN_EMAIL` | Email for the seeded first-boot admin | `admin@truss.local` |
+| `TRUSS_BOOTSTRAP_ADMIN_PASSWORD` | Password for the seeded admin (blank = a random one is generated and printed to the API logs) | (generated) |
+
+### First-boot admin
+
+When `TRUSS_AUTH_REQUIRED=true` and no account exists yet, Truss seeds a default
+admin on startup so you can log in immediately, the same way Grafana and Argo CD do.
+This only ever runs when the identity store is empty, so it never overwrites real users.
+
+- **Email:** `admin@truss.local` (override with `TRUSS_BOOTSTRAP_ADMIN_EMAIL`).
+- **Password:** if you set `TRUSS_BOOTSTRAP_ADMIN_PASSWORD`, that value is used. If you
+  leave it blank, a random password is generated and printed once to the API logs:
+
+  ```bash
+  # Docker Compose
+  docker compose logs truss-api | grep "Default admin"
+  # Kubernetes / Helm
+  kubectl -n truss logs deploy/truss-api | grep "Default admin"
+  ```
+
+The seeded account has full admin rights. **Change the password right after your first
+login** in the dashboard under **Settings → Account → Change Password** (which runs the
+Ory Kratos self-service settings flow). To opt out of seeding entirely, set
+`TRUSS_BOOTSTRAP_ADMIN=false` and create your first user via the normal registration screen.
 
 ## Authorization (Ory Keto)
 
@@ -78,11 +103,34 @@ Required for file storage features.
 | `MINIO_REGION` | S3 region | `us-east-1` |
 | `MINIO_FORCE_PATH_STYLE` | Use path-style S3 URLs (required for MinIO) | `true` |
 
+## Cache / KV (Valkey)
+
+Optional. Powers the Cache / KV panel (keyspace browser, stats, developer views).
+Valkey is Redis-compatible, so an existing Redis also works. Without these, the
+Cache panel reports "not configured" and the rest of Truss runs normally.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `VALKEY_HOST` | Valkey/Redis hostname | `localhost` |
+| `VALKEY_PORT` | Valkey/Redis port | `6379` |
+| `VALKEY_PASSWORD` | `requirepass` value (blank = no auth) | (none) |
+| `VALKEY_URL` | Full `redis://` URL, overrides host/port/password | (none) |
+
+`VALKEY_PASSWORD` is the cache service's own auth and is unrelated to the dashboard
+login. The bundled Compose and Helm setups generate it for you.
+
 ## Cross-Origin
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `CORS_ALLOWED_ORIGINS` | Comma-separated frontend origins | (none) |
+| `TRUSS_PUBLIC_URL` | Public URL users hit in the browser (used to infer the session-cookie `Secure` flag) | `http://localhost:3000` |
+| `COOKIE_SECURE` | Force the session-cookie `Secure` flag (`true`/`false`). Inferred from the URL scheme when unset | (inferred) |
+
+The session cookie is only marked `Secure` when you serve Truss over HTTPS. Serving over
+plain HTTP (e.g. `http://localhost:3000`) keeps it non-`Secure` so the browser does not
+drop it; otherwise login would never stick. Set `COOKIE_SECURE=true` to force it on behind
+an HTTPS-terminating proxy that the API can't detect.
 
 When deploying the dashboard and API on different domains, set this to allow cross-origin requests:
 

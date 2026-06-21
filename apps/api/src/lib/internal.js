@@ -135,6 +135,10 @@ export function ensureInternalSchema() {
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
+    -- tenant_id must exist before the composite index below references it. On a fresh
+    -- database the column is not inline on the table, so add it here first (idempotent;
+    -- a duplicate add-column-if-not-exists runs later in the migration section too).
+    alter table truss_internal.projects add column if not exists tenant_id text;
     -- Per-tenant unique slug (not global — multiple tenants can have "default" slug)
     CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_slug_tenant ON truss_internal.projects(slug, tenant_id);
     -- Drop legacy global unique if it exists

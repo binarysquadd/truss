@@ -1088,6 +1088,8 @@ export function renderSettingsMain(s: any): React.JSX.Element | null {
     const hydraHealth = (s as any).hydraHealth;
     const oathkeeperHealth = (s as any).oathkeeperHealth;
     const oathkeeperVersion = (s as any).oathkeeperVersion;
+    const flagdHealth = (s as any).flagdHealth;
+    const cacheHealth = (s as any).cacheHealth;
     const metadata = (s as any).metadata;
 
     const dbOk = Boolean(metadata);
@@ -1096,6 +1098,8 @@ export function renderSettingsMain(s: any): React.JSX.Element | null {
     const hydraOk = hydraHealth?.health?.status === "ok";
     const gatewayOk = oathkeeperHealth?.health?.status === "ok";
     const storageOk = integrationsStatus?.storage?.s3?.reachable === true || integrationsStatus?.storage?.console?.reachable === true;
+    const flagsOk = flagdHealth?.connected === true;
+    const cacheOk = cacheHealth?.ok === true;
 
     const services = [
       {
@@ -1141,9 +1145,22 @@ export function renderSettingsMain(s: any): React.JSX.Element | null {
           { label: "Console", value: integrationsStatus?.storage?.console?.reachable ? "Connected" : "Not configured" },
         ].filter(Boolean),
       },
+      {
+        name: "Feature Flags", ok: flagsOk, subtitle: "flagd (CNCF)",
+        details: [
+          { label: "Evaluation API", value: flagsOk ? "Connected" : "Unreachable" },
+        ].filter(Boolean),
+      },
+      {
+        name: "Cache / KV", ok: cacheOk, subtitle: "Valkey",
+        details: [
+          { label: "Connection", value: cacheOk ? "Connected" : (cacheHealth?.configured === false ? "Not configured" : "Unreachable") },
+          cacheHealth?.version ? { label: "Version", value: cacheHealth.version } : null,
+        ].filter(Boolean),
+      },
     ];
 
-    const loaded = integrationsStatus || ketoHealth || hydraHealth || oathkeeperHealth;
+    const loaded = integrationsStatus || ketoHealth || hydraHealth || oathkeeperHealth || flagdHealth || cacheHealth;
 
     return (
       <div className="min-h-0 flex-1 overflow-auto p-6">

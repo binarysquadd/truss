@@ -115,8 +115,9 @@ export function useAuth(apiBaseUrl: string) {
         throw new Error(msg);
       }
 
-      // API flow returns session_token in the body
-      if (!data.session_token) {
+      // The API sets the session as an HttpOnly cookie and returns a non-secret
+      // `authenticated` flag instead of echoing the token.
+      if (!data.authenticated) {
         throw new Error("Login succeeded but no session was created. Please try again.");
       }
 
@@ -160,7 +161,7 @@ export function useAuth(apiBaseUrl: string) {
         const data = await submitRes.json();
 
         // If Kratos returns a 400 with a new flow (code sent), that's the expected behavior
-        if (data.session_token) {
+        if (data.authenticated) {
           // Unlikely but handle instant session (cookie set by API)
           deleteCookie("truss_csrf");
           setDemoMode(false);
@@ -192,7 +193,7 @@ export function useAuth(apiBaseUrl: string) {
           throw new Error(msg);
         }
 
-        if (data.session_token) {
+        if (data.authenticated) {
           deleteCookie("truss_csrf");
           setDemoMode(false);
         }
@@ -342,7 +343,7 @@ export function useAuth(apiBaseUrl: string) {
         throw new Error(msg);
       }
 
-      if (!data.session_token) {
+      if (!data.authenticated) {
         throw new Error("Registration succeeded but no session was created. Please try logging in.");
       }
 

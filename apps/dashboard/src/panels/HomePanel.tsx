@@ -27,6 +27,7 @@ import {
   UserList,
   Users,
   Waveform,
+  Stack,
 } from "@phosphor-icons/react";
 import { apiFetch } from "../types";
 import type { HomeView } from "../types";
@@ -288,7 +289,7 @@ export function renderHomePaneB(_s: any): React.ReactNode {
 export function renderHomeMain(_s: any): React.ReactNode {
   const {
     primaryNav, homeView, metadata, integrationsStatus, ketoHealth, hydraHealth,
-    oathkeeperHealth, flagdHealth, consumption, billingUsage, projects, projectsLoaded,
+    oathkeeperHealth, flagdHealth, cacheHealth, consumption, billingUsage, projects, projectsLoaded,
     activeProjectId, setActiveProjectId, setShowNewProjectModal, setProvisioningStep,
     setProvisioningError, setNewProjectName, setNewProjectDescription,
     setShowDescriptionField, setNewProjectBucketName, setNewProjectCreateBucket,
@@ -357,6 +358,7 @@ export function renderHomeMain(_s: any): React.ReactNode {
               { label: "Gateway", ok: oathkeeperHealth?.health?.status === "ok" },
               { label: "Storage", ok: storageOk },
               { label: "Flags", ok: flagdHealth?.connected === true },
+              { label: "Cache", ok: cacheHealth?.ok === true },
             ].map((s) => (
               <div key={s.label} className="flex items-center gap-1.5">
                 <span className={`h-1.5 w-1.5 rounded-full ${integrationsStatus || ketoHealth ? (s.ok ? "bg-emerald-400" : "bg-red-400") : "bg-slate-600 animate-pulse"}`} />
@@ -840,6 +842,7 @@ export function renderHomeMain(_s: any): React.ReactNode {
             { key: "oauth2", label: "OAuth2 Server", desc: "Ory Hydra — issue tokens, client apps", icon: <LockKey size={16} weight="regular" /> },
             { key: "gateway", label: "Routes", desc: "Ory Oathkeeper — route auth, zero-trust", icon: <Plug size={16} weight="regular" /> },
             { key: "flags", label: "Feature Flags", desc: "flagd (CNCF) — toggles, rollouts, A/B variants", icon: <Flag size={16} weight="regular" /> },
+            { key: "cache", label: "Cache / KV", desc: "Valkey — Redis-compatible cache & key/value store", icon: <Stack size={16} weight="regular" /> },
           ] as const).map((mod) => {
               // Compute health status: true = healthy, false = down, null = loading
               let healthy: boolean | null = null;
@@ -869,6 +872,11 @@ export function renderHomeMain(_s: any): React.ReactNode {
                 case "flags":
                   if (flagdHealth?.connected === true) healthy = true;
                   else if (flagdHealth && !flagdHealth.connected) healthy = false;
+                  else healthy = null;
+                  break;
+                case "cache":
+                  if (cacheHealth?.ok === true) healthy = true;
+                  else if (cacheHealth && cacheHealth.ok !== true) healthy = false;
                   else healthy = null;
                   break;
               }

@@ -46,16 +46,19 @@ import {
   User,
   UserList,
   Users,
+  Stack,
   Waveform,
   Wrench,
   ArrowSquareOut,
+  Eye,
+  EyeSlash,
 } from "@phosphor-icons/react";
 import "@xyflow/react/dist/style.css";
 import {
   type QueryResult, type SqlMetadata, type QueryTab, type QueryHistoryItem,
   type SavedQuery, type PrimaryNav, type SqlMainView, type SqlTool, type SettingsView,
   type ConnectionMethod, type DeploymentMode, type DatabaseView, type ThemeMode,
-  type AuthView, type AuthzView, type EdgeView, type StorageView, type OAuth2View, type SearchView, type WebhooksView, type GatewayView, type FlagsView, type RealtimeView,
+  type AuthView, type AuthzView, type EdgeView, type StorageView, type OAuth2View, type SearchView, type WebhooksView, type GatewayView, type FlagsView, type CacheView, type RealtimeView,
   type HomeView,
   type ErdPayload, type ConnectionProfile, type CurrentConnection,
   type IntegrationsStatus, type AuthIdentity, type AuthProvider, type AuthSession,
@@ -644,7 +647,9 @@ function App() {
 
   // ─── Feature Flags state ────────────────────────────────────────────────────
   const [flagsView, setFlagsView] = useState<FlagsView>("list");
+  const [cacheView, setCacheView] = useState<CacheView>("browser");
   const [flagdHealth, setFlagdHealth] = useState<{ connected?: boolean } | null>(null);
+  const [cacheHealth, setCacheHealth] = useState<{ ok?: boolean; configured?: boolean } | null>(null);
 
   // ─── AuthZ (Keto) state ────────────────────────────────────────────────────
   const [ketoNamespaces, setKetoNamespaces] = useState<Array<{ name: string }>>([]);
@@ -2620,6 +2625,8 @@ function App() {
     apiFetch(`${apiBaseUrl}/api/oathkeeper/health`).then(r => r.json()).then(setOathkeeperHealth).catch(() => {});
     // Load flagd health on startup
     apiFetch(`${apiBaseUrl}/api/flags/status`).then(r => r.json()).then(setFlagdHealth).catch(() => {});
+    // Load Valkey cache health on startup
+    apiFetch(`${apiBaseUrl}/api/cache/status`).then(r => r.json()).then(setCacheHealth).catch(() => {});
     // Load latency percentiles for Home widget
     loadLatencyPercentiles();
   }, [fetchMetadata, fetchCurrentConnection, fetchIntegrationsStatus, loadConsumption, loadSavedQueriesFromServer, loadEnvironment, loadProjects, loadKetoHealth, loadOrgs, loadLatencyPercentiles, loadSampleAppStatus, apiBaseUrl]);
@@ -4800,7 +4807,8 @@ function App() {
     hydraJwks, setHydraJwks, selectedHydraClient, setSelectedHydraClient,
     showCreateClientModal, setShowCreateClientModal,
     editingHydraClient, setEditingHydraClient,
-    flagsView, setFlagsView, flagdHealth,
+    flagsView, setFlagsView, flagdHealth, cacheHealth,
+    cacheView, setCacheView,
     gatewayView, setGatewayView, oathkeeperHealth, setOathkeeperHealth, oathkeeperRules, setOathkeeperRules,
     isOathkeeperLoading, setIsOathkeeperLoading, oathkeeperLoaded, setOathkeeperLoaded,
     oathkeeperVersion, setOathkeeperVersion, selectedGatewayRule, setSelectedGatewayRule,
@@ -5101,14 +5109,25 @@ function App() {
                 {(authLoginMethod === "password" || authScreenView === "register") && (
                   <div>
                     <label className="block text-[10px] font-medium text-slate-400 mb-1">Password</label>
-                    <input
-                      type="password"
-                      value={authGatePassword}
-                      onChange={(e) => setAuthGatePassword(e.target.value)}
-                      className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:border-accent-500 focus:outline-none focus:ring-1 focus:ring-accent-500/30"
-                      placeholder="••••••••"
-                      required
-                    />
+                    <div className="relative">
+                      <input
+                        type={showAuthPassword ? "text" : "password"}
+                        value={authGatePassword}
+                        onChange={(e) => setAuthGatePassword(e.target.value)}
+                        className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 pr-10 text-sm text-slate-200 placeholder-slate-600 focus:border-accent-500 focus:outline-none focus:ring-1 focus:ring-accent-500/30"
+                        placeholder="••••••••"
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowAuthPassword((v) => !v)}
+                        aria-label={showAuthPassword ? "Hide password" : "Show password"}
+                        title={showAuthPassword ? "Hide password" : "Show password"}
+                        className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-500 hover:text-slate-300 transition-colors"
+                      >
+                        {showAuthPassword ? <EyeSlash size={16} weight="regular" /> : <Eye size={16} weight="regular" />}
+                      </button>
+                    </div>
                     {authScreenView === "login" && authLoginMethod === "password" && (
                       <div className="mt-1.5 text-right">
                         <button
@@ -5596,6 +5615,7 @@ function App() {
               { id: "oauth2" as PrimaryNav, icon: <LockKey size={18} weight="regular" />, label: "OAuth2", moduleKey: "oauth2" },
               { id: "gateway" as PrimaryNav, icon: <Plug size={18} weight="regular" />, label: "API Gateway", moduleKey: "gateway" },
               { id: "flags" as PrimaryNav, icon: <Flag size={18} weight="regular" />, label: "Feature Flags", moduleKey: "flags" },
+              { id: "cache" as PrimaryNav, icon: <Stack size={18} weight="regular" />, label: "Cache", moduleKey: "cache" },
             ] as const).map((item) => (
               <button
                 key={item.id}
@@ -5608,6 +5628,7 @@ function App() {
                   if (item.id === "oauth2") setOAuth2View("overview");
                   if (item.id === "gateway") setGatewayView("overview");
                   if (item.id === "flags") setFlagsView("list");
+                  if (item.id === "cache") setCacheView("browser");
                 }}
                 className={`truss-btn truss-nav-btn w-full rounded border px-2 py-2 text-xs ${
                   primaryNav === item.id
@@ -6015,6 +6036,7 @@ function App() {
           { id: "nav-oauth2", label: "OAuth2", group: "Navigation", icon: <LockKey size={16} weight="regular" />, action: () => { setPrimaryNav("oauth2"); setOAuth2View("overview"); } },
           { id: "nav-gateway", label: "API Gateway", group: "Navigation", icon: <Plug size={16} weight="regular" />, action: () => { setPrimaryNav("gateway"); setGatewayView("overview"); } },
           { id: "nav-flags", label: "Feature Flags", group: "Navigation", icon: <Flag size={16} weight="regular" />, action: () => { setPrimaryNav("flags"); setFlagsView("list"); } },
+          { id: "nav-cache", label: "Cache", group: "Navigation", icon: <Stack size={16} weight="regular" />, action: () => { setPrimaryNav("cache"); setCacheView("browser"); } },
           { id: "nav-settings", label: "Settings", group: "Navigation", icon: <GearSix size={16} weight="regular" />, action: () => { setPrimaryNav("settings"); setSettingsView("account"); } },
         ];
 

@@ -13,6 +13,7 @@ import { renderSettingsMain, renderSettingsPaneB } from "./panels/SettingsPanel"
 import { renderOAuth2Main, renderOAuth2PaneB } from "./panels/OAuth2Panel";
 import { renderGatewayMain, renderGatewayPaneB } from "./panels/GatewayPanel";
 import { renderFlagsMain, renderFlagsPaneB } from "./panels/FlagsPanel";
+import { renderCacheMain, renderCachePaneB } from "./panels/CachePanel";
 
 export function renderModulesMain(s: any): React.JSX.Element | null {
   const { primaryNav } = s;
@@ -28,6 +29,7 @@ export function renderModulesMain(s: any): React.JSX.Element | null {
     case "oauth2": return renderOAuth2Main(s);
     case "gateway": return renderGatewayMain(s);
     case "flags": return renderFlagsMain(s);
+    case "cache": return renderCacheMain(s);
     default: return null;
   }
 }
@@ -46,6 +48,7 @@ export function renderModulesPaneB(s: any): React.JSX.Element | null {
     case "oauth2": return renderOAuth2PaneB(s);
     case "gateway": return renderGatewayPaneB(s);
     case "flags": return renderFlagsPaneB(s);
+    case "cache": return renderCachePaneB(s);
     default: return null;
   }
 }

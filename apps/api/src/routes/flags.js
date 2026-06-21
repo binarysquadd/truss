@@ -3,13 +3,14 @@ import { getCustomerPool, getPool } from "../lib/state.js";
 import { writeAuditLog, ensureInternalSchema } from "../lib/internal.js";
 import logger from "../lib/logger.js";
 import { trackFeature } from "../lib/observability.js";
+import { buildFlagdUrl } from "../lib/config-helpers.js";
 
 const log = logger.child({ module: "flags" });
 
 // ─── Flagd connection config ───
 const FLAGD_HOST = process.env.FLAGD_HOST || "localhost";
 const FLAGD_PORT = process.env.FLAGD_PORT || "8013";
-const FLAGD_URL = process.env.FLAGD_URL || (FLAGD_HOST.startsWith("http") ? FLAGD_HOST : `http://${FLAGD_HOST}${FLAGD_PORT ? `:${FLAGD_PORT}` : ""}`);
+const FLAGD_URL = buildFlagdUrl(FLAGD_HOST, FLAGD_PORT, process.env.FLAGD_URL);
 
 // ─── Module-level state ───
 const tablesEnsuredPools = new WeakSet();

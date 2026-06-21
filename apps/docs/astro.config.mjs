@@ -66,6 +66,7 @@ export default defineConfig({
             { label: "OAuth2 Consent Bridge", slug: "guides/oauth2-consent" },
             { label: "API Gateway", slug: "guides/gateway" },
             { label: "Feature Flags", slug: "guides/feature-flags" },
+            { label: "Cache / KV", slug: "guides/cache-kv" },
             { label: "API Keys", slug: "guides/api-keys" },
             { label: "Drizzle ORM", slug: "guides/drizzle" },
             { label: "Prisma", slug: "guides/prisma" },

@@ -19,6 +19,7 @@ import { maskConnectionString } from "./lib/helpers.js";
 import { ensureInternalSchema } from "./lib/internal.js";
 import { realtimeClients, realtimeChannels, bootstrapRealtimeListener, presenceJoin, presenceLeave, presenceDisconnect, presenceHeartbeat } from "./lib/realtime.js";
 import { sessionMiddleware, demoWriteProtection, verifySession, resolveOrg, resolveEnvironment, resolveTenantPool } from "./lib/session.js";
+import { bootstrapAdmin } from "./lib/bootstrap-admin.js";
 import { csrfMiddleware } from "./lib/csrf.js";
 import { resolveApiKey } from "./lib/api-keys.js";
 import { requestLogger, globalErrorHandler, cleanupOldLogs } from "./lib/observability.js";
@@ -52,6 +53,8 @@ import { router as orgsRoutes } from "./routes/orgs.js";
 import { router as sampleAppRoutes } from "./routes/sample-app.js";
 import { router as configRoutes } from "./routes/config.js";
 import { router as flagsRoutes } from "./routes/flags.js";
+import { router as cacheRoutes } from "./routes/cache.js";
+import { router as integrationsRoutes } from "./routes/integrations.js";
 import { router as extensionsRoutes } from "./routes/extensions.js";
 import { router as environmentsRoutes } from "./routes/environments.js";
 
@@ -468,12 +471,17 @@ app.use("/v1/docs", swaggerUi.serve, swaggerUi.setup(openApiBase, {
 app.get("/v1/openapi.json", (_req, res) => res.json(openApiBase));
 
 // ─── Rate limiting ───
+// Opt-out for test runs: a full smoke suite fires hundreds of requests from one IP
+// and would otherwise trip these limits. NEVER set this in production.
+const RATE_LIMIT_DISABLED = process.env.TRUSS_DISABLE_RATE_LIMIT === "true";
+
 const generalLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 200,            // 200 requests per minute per IP
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests. Please try again later." },
+  skip: () => RATE_LIMIT_DISABLED,
 });
 
 const strictLimiter = rateLimit({
@@ -482,6 +490,7 @@ const strictLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests. Please try again later." },
+  skip: () => RATE_LIMIT_DISABLED,
 });
 
 const adminLimiter = rateLimit({
@@ -490,7 +499,7 @@ const adminLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many admin requests. Please try again later." },
-  skip: (req) => req.method === "GET", // only limit state-changing admin operations
+  skip: (req) => RATE_LIMIT_DISABLED || req.method === "GET", // only limit state-changing admin operations
 });
 
 app.use("/api/", generalLimiter);
@@ -529,6 +538,8 @@ app.use(orgsRoutes);
 app.use(sampleAppRoutes);
 app.use(configRoutes);
 app.use(flagsRoutes);
+app.use(cacheRoutes);
+app.use(integrationsRoutes);
 app.use(extensionsRoutes);
 
 // ─── Global error handler (must be after all routes) ───
@@ -695,6 +706,8 @@ ensureInternalSchema().then(async () => {
     logger.info({ port: API_PORT, database: masked }, `Truss API listening on http://localhost:${API_PORT}`);
     logger.info(`Realtime WebSocket at ws://localhost:${API_PORT}/realtime`);
     bootstrapRealtimeListener();
+    // First-boot default admin (no-op if any identity already exists)
+    bootstrapAdmin();
     // Clean up old logs daily (24h interval)
     cleanupOldLogs();
     setInterval(cleanupOldLogs, 24 * 60 * 60 * 1000);

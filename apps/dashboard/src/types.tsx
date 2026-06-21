@@ -98,7 +98,7 @@ export type SavedQuery = {
   createdAt: string;
 };
 
-export type PrimaryNav = "home" | "database" | "sql" | "authn" | "authz" | "storage" | "edge" | "realtime" | "search" | "webhooks" | "oauth2" | "gateway" | "flags" | "settings";
+export type PrimaryNav = "home" | "database" | "sql" | "authn" | "authz" | "storage" | "edge" | "realtime" | "search" | "webhooks" | "oauth2" | "gateway" | "flags" | "cache" | "settings";
 export type SqlMainView = "editor" | "erd" | "history";
 /** @deprecated Use SqlMainView instead — identical type kept for backward compat */
 export type SqlTool = SqlMainView;
@@ -145,6 +145,7 @@ export type SearchView = "overview" | "playground" | "setup" | "developer";
 export type WebhooksView = "list" | "detail" | "create" | "developer";
 export type GatewayView = "overview" | "rules" | "testing" | "pipeline" | "developer";
 export type FlagsView = "list" | "detail" | "segments" | "playground" | "activity" | "developer";
+export type CacheView = "browser" | "stats" | "developer";
 export type RealtimeView = "main" | "developer";
 
 export type AuthScreenView = "login" | "register" | "recovery";

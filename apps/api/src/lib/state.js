@@ -37,6 +37,12 @@ export const MINIO_SECRET_KEY = (process.env.MINIO_SECRET_KEY || "").trim();
 export const MINIO_REGION = (process.env.MINIO_REGION || "us-east-1").trim();
 export const MINIO_FORCE_PATH_STYLE = (process.env.MINIO_FORCE_PATH_STYLE || "true").trim().toLowerCase() !== "false";
 
+// Valkey (Redis-compatible cache / KV). VALKEY_URL wins if set; else built from host/port/password.
+export const VALKEY_HOST = (process.env.VALKEY_HOST || "localhost").trim();
+export const VALKEY_PORT = Number(process.env.VALKEY_PORT || 6379);
+export const VALKEY_PASSWORD = (process.env.VALKEY_PASSWORD || "").trim();
+export const VALKEY_URL = (process.env.VALKEY_URL || "").trim();
+
 
 export const FORBIDDEN_KEYWORDS = [
   "insert", "update", "delete", "alter", "drop", "truncate", "create",

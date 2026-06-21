@@ -459,6 +459,29 @@ services:
       - "8014"
 
   # ────────────────────────────────────────────
+  # Valkey — Redis-compatible cache / KV store
+  # ────────────────────────────────────────────
+  # In-memory cache, key/value store, session store, rate-limit counters.
+  # Password-protected (requirepass); the Truss API connects with VALKEY_PASSWORD.
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    environment:
+      VALKEY_PASSWORD: "${VALKEY_PASSWORD:?VALKEY_PASSWORD is required - set it in .env.selfhosted}"
+    # requirepass is read from the container env at runtime, not baked into the args.
+    # Ephemeral cache: persistence (RDB/AOF) disabled — restart = empty cache, which
+    # is the right default for a cache. Flip --save/--appendonly + add a volume for durability.
+    command: ["sh", "-c", "exec valkey-server --requirepass \"$$VALKEY_PASSWORD\" --save \"\" --appendonly no"]
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Internal-only — accessed by the API service, not exposed to the host.
+    expose:
+      - "6379"
+
+  # ────────────────────────────────────────────
   # Truss API — Express / Node.js backend
   # ────────────────────────────────────────────
   # Handles all dashboard API requests, SQL workbench, client API,
@@ -484,6 +507,8 @@ services:
         condition: service_healthy
       flagd:
         condition: service_started
+      valkey:
+        condition: service_healthy
     environment:
       # ── Self-hosted mode flags ──
       TRUSS_SELF_HOSTED: "true"
@@ -491,8 +516,16 @@ services:
       # Comma-separated Kratos identity IDs granted admin powers (DB roles, migrations,
       # backups, authz rules). Register first, copy your ID from the Authentication panel.
       TRUSS_ADMIN_IDENTITY_IDS: "${TRUSS_ADMIN_IDENTITY_IDS:-}"
+      # First-boot default admin (seeded only if no identity exists yet). If the
+      # password is left empty a random one is generated + printed to the API logs.
+      TRUSS_BOOTSTRAP_ADMIN_EMAIL: "${TRUSS_BOOTSTRAP_ADMIN_EMAIL:-admin@truss.local}"
+      TRUSS_BOOTSTRAP_ADMIN_PASSWORD: "${TRUSS_BOOTSTRAP_ADMIN_PASSWORD:-}"
       NODE_ENV: production
       API_PORT: "8787"
+      # Public URL users hit in the browser. Drives the session-cookie Secure flag:
+      # http:// (e.g. localhost) → no Secure (so the cookie isn't dropped over plain
+      # HTTP); https:// → Secure. Override with COOKIE_SECURE=true/false if needed.
+      TRUSS_PUBLIC_URL: "${TRUSS_PUBLIC_URL:-http://localhost:3000}"
 
       # ── Database ──
       DATABASE_URL: postgres://truss:${DB_PASSWORD}@postgres:5432/truss?sslmode=disable
@@ -525,6 +558,11 @@ services:
       # ── flagd (feature flags) — internal Docker DNS ──
       FLAGD_HOST: http://flagd
       FLAGD_PORT: "8013"
+
+      # ── Valkey (cache/KV) — internal Docker DNS ──
+      VALKEY_HOST: valkey
+      VALKEY_PORT: "6379"
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD}
     # API port is internal — Nginx proxies /api and /v1 to it.
     expose:
       - "8787"

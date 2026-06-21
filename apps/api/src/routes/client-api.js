@@ -9,6 +9,7 @@ import { getS3Client } from "../lib/s3.js";
 import { realtimeClients, realtimeChannels, realtimeEventLog, getRealtimeListener, webhookTriggers } from "../lib/realtime.js";
 import { KRATOS_PUBLIC_URL, KETO_READ_URL, MINIO_S3_ENDPOINT, HYDRA_PUBLIC_URL, HYDRA_ADMIN_URL, OATHKEEPER_ADMIN_URL, OATHKEEPER_PROXY_URL } from "../lib/state.js";
 import { oathkeeperAdminRequest } from "../lib/oathkeeper.js";
+import { isConfigured as isCacheConfigured } from "../lib/cache.js";
 import { ListBucketsCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import logger from "../lib/logger.js";
 import { logSecurityEvent } from "../lib/observability.js";
@@ -539,6 +540,7 @@ router.get("/v1/status", apiKeyAuth, requireServiceRole, async (req, res) => {
         oauth2: { configured: Boolean(HYDRA_PUBLIC_URL || HYDRA_ADMIN_URL) },
         gateway: { configured: Boolean(OATHKEEPER_PROXY_URL || OATHKEEPER_ADMIN_URL) },
         storage: { configured: Boolean(MINIO_S3_ENDPOINT) },
+        cache: { configured: isCacheConfigured() },
       },
     });
   } catch (error) {
