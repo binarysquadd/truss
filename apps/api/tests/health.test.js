@@ -15,21 +15,7 @@ describe("Health & Public Endpoints", () => {
     assertKeys(res.data, ["ok", "connection", "pool"], "/api/health");
   });
 
-  it("GET /api/billing/plans — returns plan catalog", async () => {
-    const res = await api("/api/billing/plans");
-    assertStatus(res, 200, "/api/billing/plans");
-    assertKeys(res.data, ["plans", "boosters"], "/api/billing/plans");
-    // Verify trial plan exists
-    assert(res.data.plans.trial, "Trial plan should exist in plans catalog");
-    assert(res.data.plans.starter, "Starter plan should exist");
-    assert(res.data.plans.pro, "Pro plan should exist");
-    assert(res.data.plans.team, "Team plan should exist");
-    assert(res.data.plans.business, "Business plan should exist");
-    // Verify trial plan is $0
-    assert(res.data.plans.trial.price_monthly === 0, "Trial plan should be $0/mo");
-    // Verify boosters exist
-    assert(Object.keys(res.data.boosters).length >= 4, "Should have at least 4 booster types");
-  });
+  // /api/billing/plans is a truss-cloud feature (removed from the OSS core de-cloud).
 
   it("GET /api/integrations/status — returns integration health", async () => {
     const res = await api("/api/integrations/status");
@@ -102,8 +88,8 @@ describe("Auth Flow Endpoints (Public)", () => {
       },
     });
     // In production: 422 with disposable_blocked=true
-    // In dev mode (AUTH_REQUIRED=false): skips Kratos, returns 200 with dev session
-    assert(res.status === 422 || (res.status === 200 && res.data?.session_token),
+    // In dev mode (AUTH_REQUIRED=false): skips Kratos, returns 200 with authenticated:true
+    assert(res.status === 422 || (res.status === 200 && res.data?.authenticated),
       `Should reject disposable (422) or pass in dev mode (200), got ${res.status}`);
     if (res.status === 422) {
       assert(res.data?.disposable_blocked === true, "Should flag disposable_blocked");

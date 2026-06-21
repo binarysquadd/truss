@@ -3,7 +3,7 @@
  * Uses demo mode for authenticated access.
  */
 import { describe, it } from "node:test";
-import { demoApi, assertStatus, assertKeys, assert } from "./helpers.js";
+import { api, demoApi, assertStatus, assertKeys, assert } from "./helpers.js";
 
 describe("SQL Workbench — Schema", () => {
   it("GET /api/sql/tables — returns table data", async () => {
@@ -35,7 +35,9 @@ describe("SQL Workbench — Schema", () => {
 
 describe("SQL Workbench — Queries", () => {
   it("POST /api/sql/query — executes SELECT", async () => {
-    const res = await demoApi("/api/sql/query", {
+    // Non-demo: demo mode is read-only and blocks all POST, so SQL execution is
+    // exercised in the admin (dev) context. Demo write-blocking is covered below.
+    const res = await api("/api/sql/query", {
       method: "POST",
       json: { sql: "SELECT 1 AS num, 'hello' AS msg" },
     });
@@ -70,7 +72,7 @@ describe("SQL Workbench — Queries", () => {
   });
 
   it("POST /api/sql/explain — returns query plan", async () => {
-    const res = await demoApi("/api/sql/explain", {
+    const res = await api("/api/sql/explain", {
       method: "POST",
       json: { sql: "SELECT * FROM pg_class WHERE oid = 1" },
     });

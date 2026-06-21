@@ -1,4 +1,4 @@
-.PHONY: dev dev-api dev-dashboard dev-docs build build-dashboard build-docs build-all start-api migrate-up migrate-down install test check e2e seed-stress docker-login docker-build docker-push docker-release clean diagram
+.PHONY: dev dev-api dev-dashboard dev-docs build build-dashboard build-docs build-all start-api migrate-up migrate-down install test test-unit test-deps test-int test-int-auth test-e2e test-down test-all check e2e seed-stress docker-login docker-build docker-push docker-release clean diagram
 
 # ─── Development ───
 dev:
@@ -45,6 +45,48 @@ test:
 
 check:
 	npm run check
+
+# ─── Test harness (local, dual-layer) ───
+# COMPOSE_TEST = the self-hosted stack + test override, under an isolated project.
+COMPOSE_TEST = docker compose -p truss-test -f docker-compose.selfhosted.yml -f docker-compose.test.yml --env-file .env.selfhosted
+# COMPOSE_TEST_AUTH = same stack flipped into auth-required mode.
+COMPOSE_TEST_AUTH = docker compose -p truss-test -f docker-compose.selfhosted.yml -f docker-compose.test.yml -f docker-compose.test-auth.yml --env-file .env.selfhosted
+TEST_API_URL ?= http://localhost:8788
+E2E_BASE_URL ?= http://localhost:3001
+TEST_DB_PASS = $(shell grep -E '^DB_PASSWORD=' .env.selfhosted 2>/dev/null | cut -d= -f2-)
+TEST_DB_URL ?= postgres://truss:$(TEST_DB_PASS)@localhost:55432/truss?sslmode=disable
+
+# Unit tests — pure functions, no infra, sub-second.
+test-unit:
+	npm run test:unit -w @truss/api
+
+# Bring up the isolated test stack (deps + API in dev/test mode) and wait for health.
+test-deps:
+	$(COMPOSE_TEST) up -d --build --wait
+	@echo "waiting for test API on $(TEST_API_URL) ..."
+	@for i in $$(seq 1 30); do curl -fsS $(TEST_API_URL)/api/health >/dev/null 2>&1 && { echo "ready"; break; }; sleep 2; done
+
+# Integration smoke suite (dev mode) against the test stack.
+test-int: test-deps
+	TEST_API_URL=$(TEST_API_URL) TEST_DB_URL="$(TEST_DB_URL)" npm test
+
+# Auth-required path: recreate the stack in auth mode, run the login/session/admin test.
+test-int-auth:
+	$(COMPOSE_TEST_AUTH) down -v
+	$(COMPOSE_TEST_AUTH) up -d --build --wait
+	@for i in $$(seq 1 30); do curl -fsS $(TEST_API_URL)/api/health >/dev/null 2>&1 && break; sleep 2; done
+	TEST_AUTH_MODE=1 TEST_API_URL=$(TEST_API_URL) npm run test:auth -w @truss/api
+
+# E2E (Playwright) against the test stack dashboard.
+test-e2e: test-deps
+	E2E_BASE_URL=$(E2E_BASE_URL) npm run test:e2e -w @truss/dashboard
+
+# Tear the test stack down and wipe its ephemeral volumes.
+test-down:
+	$(COMPOSE_TEST_AUTH) down -v
+
+# Unit + integration in one go (e2e + auth are opt-in).
+test-all: test-unit test-int
 
 # ─── E2E Tests (Playwright) ───
 e2e:
