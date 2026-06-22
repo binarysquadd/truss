@@ -3,7 +3,7 @@ title: Quickstart
 description: Get Truss running locally in 5 minutes.
 ---
 
-Truss is open source and self-hosted. Clone it, point it at a Postgres database, and you have the full platform running locally with no signup, no limits, and no external services required.
+Truss is open source and self-hosted. Clone it, point it at a Postgres database, and you have the full platform running locally with no signup and no external services required.
 
 ## Prerequisites
 
@@ -14,20 +14,20 @@ Truss is open source and self-hosted. Clone it, point it at a Postgres database,
 ## 1. Clone and install
 
 ```bash
-git clone https://github.com/binarysquad/truss
+git clone https://github.com/binarysquadd/truss
 cd truss
 npm install
 ```
 
 ## 2. Configure environment
 
-Copy the example env file for the API:
+Copy the example env file at the repo root:
 
 ```bash
-cp apps/api/.env.example apps/api/.env
+cp .env.example .env
 ```
 
-Edit `apps/api/.env` and set your database connection:
+Edit `.env` and set your database connection:
 
 ```env
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres

@@ -222,7 +222,7 @@ curl -X POST \
   -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "INSERT INTO embeddings (content, embedding) VALUES ($1, $2::vector)",
+    "sql": "INSERT INTO embeddings (content, embedding) VALUES ($1, $2::vector)",
     "params": ["Hello world", "[0.1, 0.2, 0.3, ...]"]
   }'
 
@@ -232,7 +232,7 @@ curl -X POST \
   -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "SELECT id, content, embedding <=> $1::vector AS distance FROM embeddings ORDER BY embedding <=> $1::vector LIMIT 10",
+    "sql": "SELECT id, content, embedding <=> $1::vector AS distance FROM embeddings ORDER BY embedding <=> $1::vector LIMIT 10",
     "params": ["[0.1, 0.2, 0.3, ...]"]
   }'
 
@@ -242,7 +242,7 @@ curl -X POST \
   -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "CREATE INDEX ON embeddings USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)"
+    "sql": "CREATE INDEX ON embeddings USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)"
   }'
 ```
   </TabItem>

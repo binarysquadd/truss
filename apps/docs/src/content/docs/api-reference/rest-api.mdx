@@ -30,10 +30,12 @@ Two key types: `anon` (prefix `truss_pk_`) respects RLS, `service_role` (prefix 
 {
   "sql": "SELECT * FROM users WHERE active = $1",
   "params": [true],
-  "row_limit": 1000,
-  "timeout": 10000
+  "row_limit": 10000,
+  "timeout": 15000
 }
 ```
+
+`timeout` is in milliseconds (default 15000, max 30000). `row_limit` defaults to 10000 (max 50000) and is only applied when the query has no explicit `LIMIT`.
 
 Response:
 ```json
@@ -86,7 +88,7 @@ Examples: `?age=gt.18`, `?name=ilike.*john*`, `?id=in.(1,2,3)`, `?deleted=is.nul
 
 ## Management API
 
-All management endpoints require a `service_role` key.
+All management endpoints require a `service_role` key, with two exceptions: `GET /v1/gateway/health` and `GET /v1/oauth2/discovery` only need a valid API key (any `anon` or `service_role` key works).
 
 ### Platform
 
@@ -180,11 +182,11 @@ All errors return a consistent JSON structure:
 
 ## Rate limiting
 
-All `/v1/*` endpoints are rate-limited per API key. Default: 100 requests/minute. Headers:
+Rate limiting is opt-in per API key. In the open-source core there is **no default limit** — keys are unlimited unless you set a per-key `rate_limit` (requests/minute). Every response still carries the limit headers; when a key is unlimited they report `-1`:
 
 ```
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 95
+X-RateLimit-Limit: -1
+X-RateLimit-Remaining: -1
 ```
 
-Returns `429 Too Many Requests` when exceeded.
+When a per-key limit is configured, the headers show the limit and the remaining count in the current 60-second window, and the API returns `429 Too Many Requests` once the limit is exceeded.

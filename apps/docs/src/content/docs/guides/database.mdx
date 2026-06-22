@@ -228,6 +228,33 @@ Branch databases are dropped entirely. This action is irreversible.
 
 If you set a `ttlHours` value when creating a branch, Truss automatically marks the branch as expired after the specified duration. Expired branches are cleaned up on the next check cycle. In self-hosted Truss, branches are unlimited — the only constraint is available disk space.
 
+## Environments
+
+Each project can run isolated **environments** (e.g. `dev`, `staging`, `production`). An
+environment is derived from its project: it gets its own Postgres schema and storage bucket
+(`<project-schema>_<slug>` and `<project-bucket>-<slug>`), so work in one environment never
+touches another. One environment is marked default and cannot be deleted while it holds that
+role. The single-instance core is capped at one environment per project; Truss Cloud lifts
+the cap.
+
+```bash
+# List environments for a project
+curl http://localhost:8787/api/projects/{projectId}/environments
+
+# Create an environment (name + URL-safe slug)
+curl -X POST http://localhost:8787/api/projects/{projectId}/environments \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Staging", "slug": "staging"}'
+
+# Update an environment's name or config
+curl -X PATCH http://localhost:8787/api/environments/{id} \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Pre-prod"}'
+
+# Delete (soft-delete) an environment — the default one cannot be deleted
+curl -X DELETE http://localhost:8787/api/environments/{id}
+```
+
 ## Backups and Point-in-Time Recovery (PITR)
 
 Truss provides backup management through the dashboard and API. Backups use `pg_dump` under the hood.
@@ -359,6 +386,25 @@ IMPORT FOREIGN SCHEMA public FROM SERVER remote_db INTO foreign_analytics;
 ```
 
 Manage these from **Database > FDW** in the dashboard.
+
+## External connections
+
+Truss can save and connect to external Postgres databases, so you can point the workbench at
+a database other than the one Truss itself runs on. Connection strings are **encrypted at
+rest** (AES-256-GCM) and only ever returned with the password masked.
+
+```bash
+# List saved connections (passwords masked)
+curl http://localhost:8787/api/connections
+
+# Save a new connection
+curl -X POST http://localhost:8787/api/connections \
+  -H "Content-Type: application/json" \
+  -d '{"name": "analytics-replica", "connection_url": "postgresql://reader:secret@db.example.com:5432/analytics"}'
+
+# Delete a saved connection
+curl -X DELETE http://localhost:8787/api/connections/{id}
+```
 
 ## Slow Query Log
 

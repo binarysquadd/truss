@@ -22,6 +22,7 @@ Supabase/Appwrite-style backend you fully own.
 - **Storage** — S3-compatible buckets, presigned up/downloads (MinIO).
 - **Cache / KV** — Redis-compatible in-memory cache, sessions, rate-limit counters (Valkey).
 - **Plus** — realtime subscriptions, webhooks, database branching, backups/PITR, a client API surface, feature flags.
+- **MCP server** — operate your instance from an AI agent (Claude Code / Desktop, Cursor) over the Model Context Protocol. See [`apps/mcp`](apps/mcp/).
 
 ## Quickstart (self-host)
 
@@ -46,14 +47,14 @@ can sign in right away. The password is printed once to the API logs:
 **Settings → Account**. Set `TRUSS_BOOTSTRAP_ADMIN_PASSWORD` for known creds, or
 `TRUSS_BOOTSTRAP_ADMIN=false` to disable seeding and register the first user yourself.
 
-Images are published at `ghcr.io/binarysquadd/truss-{api,dashboard}` (override `images.*`
+Images are published at `ghcr.io/binarysquadd/truss-{api,dashboard,mcp}` (override `images.*`
 to pin/replace). For production, set `publicUrl` + `corsAllowedOrigins` and front it with TLS.
 
 **Docker Compose** — see [`selfhosted/README.md`](selfhosted/README.md):
 
 ```bash
 cp .env.selfhosted.example .env.selfhosted   # fill in generated secrets
-docker compose -f docker-compose.selfhosted.yml up -d
+docker compose -f docker-compose.selfhosted.yml --env-file .env.selfhosted up -d
 ```
 
 ## Development

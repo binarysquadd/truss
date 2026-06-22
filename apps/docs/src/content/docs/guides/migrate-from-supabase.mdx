@@ -110,10 +110,10 @@ Save the results as CSV or JSON.
 
 ### Import into Truss via Kratos Admin API
 
-For each user, create a Kratos identity:
+For each user, create an identity directly through the Ory Kratos Admin API (Truss does not proxy identity creation):
 
 ```bash
-curl -X POST http://localhost:8787/api/auth/admin/identities \
+curl -X POST ${KRATOS_ADMIN_URL}/admin/identities \
   -H "Content-Type: application/json" \
   -d '{
     "schema_id": "default",
@@ -137,20 +137,24 @@ curl -X POST http://localhost:8787/api/auth/admin/identities \
 
 ### Trigger password resets
 
-After importing, send recovery emails so users can set new passwords:
+After importing, send recovery emails so users can set new passwords. Recovery is a two-step flow: initialize it, then submit the email with the returned `flowId`:
 
 ```bash
-curl -X POST http://localhost:8787/api/auth/self-service/recovery \
+# 1. Initialize a recovery flow (returns a flow with an "id")
+curl http://localhost:8787/api/auth/recovery
+
+# 2. Submit the recovery request
+curl -X POST http://localhost:8787/api/auth/recovery \
   -H "Content-Type: application/json" \
-  -d '{"email": "user@example.com", "method": "link"}'
+  -d '{"flowId": "<flow-id>", "email": "user@example.com", "method": "link"}'
 ```
 
 ### Migrate user metadata
 
-Supabase stores custom user data in `raw_user_meta_data`. In Truss, use Kratos identity traits or metadata:
+Supabase stores custom user data in `raw_user_meta_data`. In Truss, use Kratos identity traits or metadata. Update identities directly through the Ory Kratos Admin API (the Truss `/v1/auth/identities` surface is read-only / GET):
 
 ```bash
-curl -X PUT http://localhost:8787/api/auth/admin/identities/{identity-id} \
+curl -X PUT ${KRATOS_ADMIN_URL}/admin/identities/{identity-id} \
   -H "Content-Type: application/json" \
   -d '{
     "schema_id": "default",

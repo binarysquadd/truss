@@ -10,7 +10,7 @@ hero:
       icon: right-arrow
       variant: primary
     - text: View on GitHub
-      link: https://github.com/binarysquad/truss
+      link: https://github.com/binarysquadd/truss
       icon: external
 ---
 
@@ -36,9 +36,11 @@ It provides a unified dashboard and client API for:
 Every feature is accessible through a REST API on port 8787. Two API layers:
 
 - **Data API** (`/v1/db/:table`, `/v1/sql`) — CRUD your tables, run SQL, call functions
-- **Management API** (`/v1/status`, `/v1/projects`, etc.) — Platform management for CLI, bots, and LLMs
+- **Management API** (`/v1/status`, `/v1/keys`, etc.) — Platform management for CLI, bots, and LLMs
 
 All client API endpoints require an API key passed via the `apikey` header.
+
+The open-source core is single-org / single-project; multi-org and multi-project are Truss Cloud features.
 
 <CardGrid>
   <Card title="Quickstart" icon="rocket">

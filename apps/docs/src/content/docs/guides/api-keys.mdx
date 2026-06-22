@@ -87,14 +87,14 @@ Revoked keys immediately stop working. The key row is kept for audit purposes bu
 
 ## Rate limiting
 
-API keys are rate-limited per minute. The default limit is 100 requests/minute, configurable in self-hosted Truss. Rate limit headers are returned on every response:
+Rate limiting is opt-in per API key. In the open-source core there is **no default limit** — keys are unlimited unless you set a per-key `rate_limit` (requests/minute) on the key. The limit headers are returned on every response; when a key is unlimited they report `-1`:
 
 ```
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 95
+X-RateLimit-Limit: -1
+X-RateLimit-Remaining: -1
 ```
 
-When the limit is exceeded, the API returns `429 Too Many Requests`.
+When a per-key limit is configured, the headers report that limit and the remaining count in the current 60-second window, and the API returns `429 Too Many Requests` once it is exceeded.
 
 ## Security
 
@@ -102,32 +102,6 @@ When the limit is exceeded, the API returns `429 Too Many Requests`.
 - Each key tracks `last_used_at` for auditing
 - Revoked keys are rejected immediately
 - Rate limiting is per-key, in-memory, with a 60-second sliding window
-
-## anon vs service_role Keys Explained
-
-Understanding the difference between key types is critical for securing your application.
-
-### anon keys (`truss_pk_*`)
-
-Anon keys are designed to be used in **client-side code** (browser, mobile app). They are safe to expose publicly because:
-- All queries run with the `authenticated` PostgreSQL role
-- Row-Level Security (RLS) policies are enforced — users can only access data their policies allow
-- JWT claims from the `Authorization` header are passed to Postgres as session variables, so RLS policies can reference the authenticated user
-
-Use anon keys when:
-- Building a frontend that queries the database directly
-- Your tables have RLS policies that restrict access per user
-- You want to expose the API to untrusted clients
-
-### service_role keys (`truss_sk_*`)
-
-Service role keys are for **server-side code only**. They bypass RLS entirely and run queries as the `postgres` superuser role. Never expose these in client-side code.
-
-Use service_role keys when:
-- Running admin scripts or migrations
-- Server-to-server API calls from your backend
-- Accessing management API endpoints
-- CI/CD pipelines and automation
 
 ## Key Rotation
 
@@ -151,18 +125,6 @@ curl -X DELETE http://localhost:8787/api/keys/{old_key_id}
 ```
 
 There is no automatic rotation schedule — rotation is a manual operation. The `last_used_at` timestamp on each key helps you verify whether the old key is still in use before revoking it.
-
-## Per-Key Rate Limits
-
-Each API key is independently rate-limited. The default limit is 100 requests/minute, configurable in self-hosted Truss. Rate limit headers are included on every response:
-
-```
-X-RateLimit-Limit: 500
-X-RateLimit-Remaining: 487
-X-RateLimit-Reset: 1705312800
-```
-
-When the limit is exceeded, the API returns `429 Too Many Requests` with a `Retry-After` header. Rate limiting uses a 60-second sliding window tracked in memory per key.
 
 ## Using Keys with the Client API
 
@@ -218,4 +180,4 @@ curl http://localhost:8787/v1/database/schema \
 
 ## Management API keys
 
-The management API endpoints (`/v1/status`, `/v1/projects`, `/v1/database/schema`, etc.) require a `service_role` key. Attempting to access them with an `anon` key returns `403 Forbidden`.
+The management API endpoints (`/v1/status`, `/v1/keys`, `/v1/database/schema`, etc.) require a `service_role` key. Attempting to access them with an `anon` key returns `403 Forbidden`.

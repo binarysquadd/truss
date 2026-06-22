@@ -41,11 +41,28 @@ The self-hosted stack (Helm + Compose) wires Valkey automatically. The API reads
 
 - **Keyspace** — scan keys by pattern (e.g. `session:*`), see each key's type + TTL, set a
   new key (with optional TTL), inspect a value, or delete a key. Scanning uses `SCAN` (never
-  the blocking `KEYS`), so it's safe on large keyspaces.
+  the blocking `KEYS`), so it's safe on large keyspaces. The browser is type-aware — it
+  renders `string`, `list`, `set`, `hash`, and `zset` values — and pages through the
+  keyspace with cursor-based scan pagination.
 - **Stats** — server `INFO`: version, memory, connected clients, keyspace hit/miss counters.
 - **Developer** — copy-paste client snippets.
 
 Flushing the whole keyspace is **admin-only**.
+
+## HTTP API
+
+The Cache panel is backed by these `/api/cache/*` routes. An unconfigured or unreachable
+Valkey returns `503`.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/cache/status` | Health + headline stats: `configured`, `ok`, Valkey `version`, `keys` (DBSIZE), and a `stats` block (memory, connected clients, uptime, keyspace hits/misses). |
+| `GET` | `/api/cache/info` | The full parsed Valkey `INFO`, grouped into sections (server, memory, clients, stats, …). |
+| `GET` | `/api/cache/keys` | `SCAN` a page of keys. Query: `pattern`, `cursor`, `count`. Returns each key's `type` + `ttl` and a `cursor` for the next page. |
+| `GET` | `/api/cache/keys/:key` | Read a single value (with `type` + `ttl`). |
+| `PUT` | `/api/cache/keys/:key` | Set a string value, optional `ttl` (seconds). |
+| `DELETE` | `/api/cache/keys/:key` | Delete a key. |
+| `POST` | `/api/cache/flush` | **Admin-only.** Clears the entire keyspace (`FLUSHDB`). |
 
 ## From your app
 
@@ -80,6 +97,6 @@ curl "https://your-truss/api/cache/keys?pattern=session:*"
 
 ## Notes
 
-- Single-instance core uses the whole keyspace. (Truss Cloud namespaces keys per tenant.)
+- The single-instance core uses the whole keyspace.
 - An unreachable Valkey degrades gracefully — the Cache panel reports "unavailable" and the
   rest of Truss keeps working.

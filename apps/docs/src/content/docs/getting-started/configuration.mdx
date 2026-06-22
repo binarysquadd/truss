@@ -3,7 +3,7 @@ title: Configuration
 description: Environment variables reference for the Truss API server.
 ---
 
-All configuration is via environment variables in `apps/api/.env`. Copy from `.env.example` to get started.
+All configuration is via environment variables in the repo-root `.env` (the API loads it from the project root). Copy from `.env.example` to get started.
 
 ## Required
 
@@ -32,17 +32,18 @@ Required for user authentication. Without these, the dashboard runs in dev mode 
 | `KRATOS_ADMIN_TOKEN` | Bearer token for the Kratos admin proxy | (none) |
 | `KRATOS_IDENTITY_SCHEMA_ID` | Identity schema to use for new users | `default` |
 | `KRATOS_OIDC_PROVIDERS` | Comma-separated social login provider IDs | (none) |
-| `TRUSS_AUTH_REQUIRED` | Require authentication for dashboard | `false` |
+| `TRUSS_AUTH_REQUIRED` | Require authentication for dashboard. Set `false` for local dev to skip login. Production (`NODE_ENV=production`) always forces auth on regardless of this value. | `true` |
 | `TRUSS_ADMIN_IDENTITY_IDS` | Comma-separated Kratos identity UUIDs for admin access | (none) |
 | `TRUSS_BOOTSTRAP_ADMIN` | Seed a default admin on first boot (set `false` to disable) | `true` |
 | `TRUSS_BOOTSTRAP_ADMIN_EMAIL` | Email for the seeded first-boot admin | `admin@truss.local` |
-| `TRUSS_BOOTSTRAP_ADMIN_PASSWORD` | Password for the seeded admin (blank = a random one is generated and printed to the API logs) | (generated) |
+| `TRUSS_BOOTSTRAP_ADMIN_PASSWORD` | Password for the seeded admin (blank = a random one is generated and printed to the API logs) | (none; blank → a random password is generated and logged) |
+| `TRUSS_DEMO_MODE` | Enable anonymous read-only demo access via the `X-Demo: true` header (rate-limited, mutations blocked). Security-relevant — leave off unless you intend a public demo. | `false` |
 
 ### First-boot admin
 
-When `TRUSS_AUTH_REQUIRED=true` and no account exists yet, Truss seeds a default
+When Kratos is configured and `TRUSS_BOOTSTRAP_ADMIN` is not `false`, Truss seeds a default
 admin on startup so you can log in immediately, the same way Grafana and Argo CD do.
-This only ever runs when the identity store is empty, so it never overwrites real users.
+This only ever runs when no identity exists yet, so it never overwrites real users.
 
 - **Email:** `admin@truss.local` (override with `TRUSS_BOOTSTRAP_ADMIN_EMAIL`).
 - **Password:** if you set `TRUSS_BOOTSTRAP_ADMIN_PASSWORD`, that value is used. If you
