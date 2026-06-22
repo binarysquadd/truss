@@ -1,35 +1,54 @@
 ---
 title: Self-Hosting
-description: Deploy Truss with Docker Compose or the Helm chart, log in, and harden it for production.
+description: Run Truss for real with Docker Compose or the Helm chart, log in, and harden it for production.
 ---
 
-The [Quickstart](../quickstart/) runs Truss locally for development. This page covers running
-it for real: Docker Compose for a single box, or the Helm chart for Kubernetes, plus the
-first-login flow and production hardening.
+import { Aside } from '@astrojs/starlight/components';
 
-Both paths bring up the full stack: the API, the dashboard, Postgres, the Ory services
-(Kratos, Keto, Hydra, Oathkeeper), MinIO, flagd, and Valkey.
+The [Quickstart](../quickstart/) gets a single instance running in one command. This page is
+the production view: Docker Compose for a single box, the Helm chart for Kubernetes, the
+first-login flow, and the hardening you should do before exposing it to the internet.
+
+Neither path needs a repo clone. Both pull published images and bring up the full stack: the
+API, the dashboard, Postgres, the Ory services (Kratos, Keto, Hydra, Oathkeeper), MinIO,
+flagd, and Valkey.
+
+<Aside type="tip" title="Or skip the ops entirely">
+[Truss Cloud](https://truss.binarysquad.org) runs and manages all of this for you, plus
+multi-org, metering, and backups. Create an account if you would rather not operate it yourself.
+</Aside>
 
 ## Docker Compose
 
-For a single host. Copy the example env, fill in generated secrets, and start:
+For a single host. Download the Compose file and an env template, fill in secrets, and start:
 
 ```bash
-cp .env.selfhosted.example .env.selfhosted
-# generate the secrets the file references (DB_PASSWORD, MINIO_*, ENCRYPTION_KEY,
-# KRATOS_*, HYDRA_SECRETS_SYSTEM, VALKEY_PASSWORD) — see the comments in the file
+curl -fsSLO https://raw.githubusercontent.com/binarysquadd/truss/main/docker-compose.selfhosted.yml
+curl -fsSL https://raw.githubusercontent.com/binarysquadd/truss/main/.env.selfhosted.example -o .env.selfhosted
+
+# fill in every GENERATE_* value, e.g. with: openssl rand -hex 32
+
 docker compose -f docker-compose.selfhosted.yml --env-file .env.selfhosted up -d
 ```
 
-The dashboard is served at `http://localhost:3000`. The MCP server (if you use it) is at
+The dashboard is served at `http://localhost:3000`. (Prefer one command? The
+[Quickstart](../quickstart/) installer does the download + secret generation for you.)
+
+The MCP server is an optional add-on, off by default. Turn it on with
+`docker compose -f docker-compose.selfhosted.yml --profile mcp up -d`; it listens at
 `http://localhost:8765/mcp`.
+
+By default the Compose file uses the published `ghcr.io/binarysquadd/truss-*` images. To build
+from source instead, clone the repo and uncomment the `build:` blocks in the file.
 
 ## Kubernetes (Helm)
 
-One `helm install`, no operators required:
+The chart is published as an OCI artifact, so one `helm install` pulls it directly. No
+operators, no clone:
 
 ```bash
-helm install truss ./charts/truss -n truss --create-namespace \
+helm install truss oci://ghcr.io/binarysquadd/charts/truss --version 0.1.0 \
+  -n truss --create-namespace \
   --set secrets.encryptionKey=$(openssl rand -hex 32) \
   --set secrets.dbPassword=$(openssl rand -hex 16) \
   --set secrets.minioSecretKey=$(openssl rand -hex 16) \
@@ -38,9 +57,14 @@ helm install truss ./charts/truss -n truss --create-namespace \
 kubectl -n truss port-forward svc/truss-dashboard 3000:80   # → http://localhost:3000
 ```
 
-Images are published at `ghcr.io/binarysquadd/truss-{api,dashboard,mcp}` (override `images.*`
-to pin or replace). For production set `publicUrl` + `corsAllowedOrigins` and front it with
-TLS. Toggle optional components with their flags (e.g. `--set mcp.enabled=false`).
+<Aside type="note">
+Use the latest chart version from the [Releases page](https://github.com/binarysquadd/truss/releases)
+in place of `0.1.0`. Pin a version in production rather than tracking the newest.
+</Aside>
+
+Images are pinned in the chart and overridable via `images.*`. For production set `publicUrl` +
+`corsAllowedOrigins` and front it with TLS. Toggle optional components with their flags (e.g.
+`--set mcp.enabled=false`).
 
 ## First login
 
@@ -53,8 +77,8 @@ is empty, so it never overwrites real users.
   a random one is printed once to the API logs:
 
   ```bash
-  docker compose logs truss-api | grep "Default admin"          # Compose
-  kubectl -n truss logs deploy/truss-api | grep "Default admin"  # Kubernetes
+  docker compose -f docker-compose.selfhosted.yml logs truss-api | grep "Default admin"   # Compose
+  kubectl -n truss logs deploy/truss-api | grep "Default admin"                            # Kubernetes
   ```
 
 Change it right after logging in under **Settings → Account → Change Password**. To opt out
@@ -74,3 +98,9 @@ See [Configuration](../configuration/) for the full list of environment variable
 - **`TRUSS_ADMIN_IDENTITY_IDS`** — admin-only features (DB roles, migrations, backups, authz
   rules) are gated. Grant admin by setting this to your Kratos identity ID(s), comma-separated.
 - Put the API behind TLS, run Postgres with backups (PITR), and never run with dev defaults.
+
+## Ready to stop running it yourself?
+
+If self-hosting has done its job and you would rather hand off the ops, [Truss
+Cloud](https://truss.binarysquad.org) is the same platform, hosted and managed, with multi-org,
+metering, and managed backups. Your client code and API surface stay the same.

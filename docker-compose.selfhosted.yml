@@ -488,9 +488,12 @@ services:
   # WebSocket realtime, and orchestrates Kratos/Keto/MinIO.
 
   truss-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # Published multi-arch image — no repo clone needed. To build from source instead
+    # (requires the repo cloned), comment `image:` and uncomment the `build:` block.
+    image: ghcr.io/binarysquadd/truss-api:latest
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
       postgres:
@@ -578,9 +581,10 @@ services:
   # Nginx serves the static build and proxies API/WebSocket requests.
 
   truss-dashboard:
-    build:
-      context: .
-      dockerfile: selfhosted/Dockerfile.dashboard
+    image: ghcr.io/binarysquadd/truss-dashboard:latest
+    # build:
+    #   context: .
+    #   dockerfile: selfhosted/Dockerfile.dashboard
     restart: unless-stopped
     depends_on:
       - truss-api
@@ -591,9 +595,13 @@ services:
   # MCP server — lets an AI agent operate this instance over the Model Context Protocol
   # at http://localhost:8765/mcp. Callers authenticate with a service_role key
   # (Authorization: Bearer truss_sk_...). Talks to the API over the internal network.
+  # Optional, off by default. Enable with: docker compose --profile mcp up -d
+  # (the published truss-mcp image ships from v0.2.0 onward).
   truss-mcp:
-    build:
-      context: ./apps/mcp
+    profiles: ["mcp"]
+    image: ghcr.io/binarysquadd/truss-mcp:latest
+    # build:
+    #   context: ./apps/mcp
     restart: unless-stopped
     depends_on:
       - truss-api

@@ -1,91 +1,119 @@
 ---
 title: Quickstart
-description: Get Truss running locally in 5 minutes.
+description: Get a full Truss instance running in one command. No repo clone, no signup.
 ---
 
-Truss is open source and self-hosted. Clone it, point it at a Postgres database, and you have the full platform running locally with no signup and no external services required.
+import { Tabs, TabItem, Steps, Aside } from '@astrojs/starlight/components';
+
+Truss is self-hosted. The fastest way to a running instance is one command, which pulls the
+published images and brings up the whole stack (API, dashboard, Postgres, auth, storage,
+cache). You do not need to clone the repository.
+
+<Aside type="tip" title="Don't want to run it yourself?">
+[Truss Cloud](https://truss.binarysquad.org) is the hosted, managed version: create an account
+and skip the ops. The self-host steps below are for running it on your own machine or server.
+</Aside>
 
 ## Prerequisites
 
-- Node.js 20+
-- PostgreSQL 15+ (local or remote)
-- (Optional) MinIO for storage, Ory Kratos for auth, Ory Keto for authorization
+- [Docker](https://docs.docker.com/get-docker/) and Docker Compose v2 (`docker compose version`)
+- About 2 GB of free disk for the images on first run
 
-## 1. Clone and install
+That's all. Node, Postgres, and the auth services run inside the stack.
 
-```bash
-git clone https://github.com/binarysquadd/truss
-cd truss
-npm install
-```
+## 1. Install
 
-## 2. Configure environment
-
-Copy the example env file at the repo root:
+<Tabs>
+<TabItem label="One command">
 
 ```bash
-cp .env.example .env
+curl -fsSL https://raw.githubusercontent.com/binarysquadd/truss/main/install.sh | sh
 ```
 
-Edit `.env` and set your database connection:
+This downloads the Compose file into `./truss`, generates strong random secrets, and starts
+everything. Re-running is safe.
 
-```env
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
-```
+</TabItem>
+<TabItem label="Manual (Docker Compose)">
 
-That's the only required variable. Auth, storage, and authorization are optional — Truss works with just a Postgres connection.
-
-## 3. Run migrations
+Download the Compose file and an env template, fill in secrets, and start:
 
 ```bash
-npm run migrate:up
+curl -fsSLO https://raw.githubusercontent.com/binarysquadd/truss/main/docker-compose.selfhosted.yml
+curl -fsSL https://raw.githubusercontent.com/binarysquadd/truss/main/.env.selfhosted.example -o .env.selfhosted
+
+# generate each GENERATE_* secret in .env.selfhosted, e.g. with: openssl rand -hex 32
+
+docker compose -f docker-compose.selfhosted.yml --env-file .env.selfhosted up -d
 ```
 
-This creates the internal schema used by Truss to manage API keys, saved queries, webhooks, realtime subscriptions, and more.
+</TabItem>
+</Tabs>
 
-## 4. Start development servers
+Give it a minute to run migrations and become healthy.
+
+## 2. Log in
+
+Open the dashboard at **`http://localhost:3000`**.
+
+On first boot Truss seeds a default admin (the way Grafana and Argo CD do) so you can sign in
+right away:
+
+- **Email:** `admin@truss.local`
+- **Password:** printed once to the API logs —
+
+  ```bash
+  docker compose -f docker-compose.selfhosted.yml logs truss-api | grep "Default admin"
+  ```
+
+Change it immediately under **Settings → Account → Change Password**.
+
+## 3. Create an API key
+
+In the dashboard, go to **Settings → API Keys → Create**. Pick `service_role` for full
+server-side access. The full secret is shown once, so copy it.
+
+<Aside type="caution">
+`service_role` keys bypass row-level checks. Keep them server-side; never ship one in a browser
+or mobile app. Use `anon` keys for client-side calls.
+</Aside>
+
+## 4. Make your first API call
+
+<Tabs>
+<TabItem label="curl">
 
 ```bash
-npm run dev
-```
-
-This starts:
-- **Dashboard** at `http://localhost:5173` (Vite dev server)
-- **API** at `http://localhost:8787` (Express with hot reload)
-
-The dashboard proxies `/api` requests to the backend automatically during development.
-
-## 5. Create an API key
-
-Open the dashboard and navigate to **Settings > API Keys**, or use the API directly:
-
-```bash
-curl -X POST http://localhost:8787/api/keys \
-  -H "Content-Type: application/json" \
-  -d '{"keyType": "service_role", "label": "dev-key"}'
-```
-
-The response includes a `secret` field — save it. This is the only time the full key is shown.
-
-## 6. Make your first API call
-
-```bash
-# Check platform status
-curl http://localhost:8787/v1/status \
+curl http://localhost:3000/v1/status \
   -H "apikey: truss_sk_your_key_here"
 ```
 
+</TabItem>
+<TabItem label="JavaScript">
+
 ```javascript
-// JavaScript
-const res = await fetch('http://localhost:8787/v1/status', {
-  headers: { apikey: 'truss_sk_your_key_here' }
+const res = await fetch('http://localhost:3000/v1/status', {
+  headers: { apikey: 'truss_sk_your_key_here' },
 });
 const status = await res.json();
 console.log(status.database.table_count);
 ```
 
+</TabItem>
+</Tabs>
+
+The dashboard and API are served on the same origin (`:3000`); Nginx proxies `/v1` and `/api`
+to the backend, so you point clients at one URL.
+
 ## What's next?
 
-- [Configuration](./configuration/) — All environment variables explained
-- [API Keys](../guides/api-keys/) — Understand anon vs service_role keys
-- [Database](../guides/database/) — SQL-over-HTTP and Auto-REST endpoints
+- [Self-Hosting](./self-hosting/) — run it for production: Helm, TLS, hardening, backups
+- [Configuration](./configuration/) — every environment variable explained
+- [API Keys](../guides/api-keys/) — `anon` vs `service_role`, rotation, scoping
+- [Database](../guides/database/) — SQL-over-HTTP, Auto-REST, pgvector, full-text search
+
+<Aside type="note" title="Want to develop Truss itself?">
+The one-command flow above is for *running* Truss. To hack on the code (clone, `npm install`,
+hot-reload dev servers), see [CONTRIBUTING](https://github.com/binarysquadd/truss/blob/main/CONTRIBUTING.md)
+in the repo.
+</Aside>

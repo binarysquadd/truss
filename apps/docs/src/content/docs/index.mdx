@@ -42,9 +42,17 @@ All client API endpoints require an API key passed via the `apikey` header.
 
 The open-source core is single-org / single-project; multi-org and multi-project are Truss Cloud features.
 
+## Two ways to run it
+
+- **Self-host** — one command pulls the published images and brings up the whole stack on your
+  own machine or server. No repo clone. Start with the [Quickstart](./getting-started/quickstart/),
+  then [Self-Hosting](./getting-started/self-hosting/) for production (Helm, TLS, backups).
+- **[Truss Cloud](https://truss.binarysquad.org)** — the same platform, hosted and managed, with
+  multi-org, metering, and managed backups. Create an account and skip the ops.
+
 <CardGrid>
   <Card title="Quickstart" icon="rocket">
-    Get Truss running locally in 5 minutes. [Start here](./getting-started/quickstart/).
+    Get a full instance running in one command. [Start here](./getting-started/quickstart/).
   </Card>
   <Card title="Configuration" icon="setting">
     Wire up Postgres, auth, storage, and more. [Configuration guide](./getting-started/configuration/).
@@ -54,5 +62,8 @@ The open-source core is single-org / single-project; multi-org and multi-project
   </Card>
   <Card title="API Reference" icon="open-book">
     Full endpoint reference for the client API. [REST API docs](./api-reference/rest-api/).
+  </Card>
+  <Card title="Truss Cloud" icon="cloud-download">
+    Hosted and managed, with multi-org and backups. [Create an account](https://truss.binarysquad.org).
   </Card>
 </CardGrid>
