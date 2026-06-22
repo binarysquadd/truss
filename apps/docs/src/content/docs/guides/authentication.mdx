@@ -1,11 +1,13 @@
 ---
 title: Authentication
-description: Complete authentication with email/password, MFA, passkeys, social login, and identity management.
+description: Self-service authentication with email/password, MFA, passkeys, magic links, and social login.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-Truss provides a full authentication system powered by Ory Kratos. The dashboard gives you a GUI for managing users, sessions, MFA, social login providers, and security policies. Everything is also available via API and client SDKs.
+Truss provides a self-service authentication system powered by Ory Kratos. It covers login, registration, account recovery, the settings flow, and multi-factor authentication (TOTP, WebAuthn security keys, recovery codes), plus passwordless options (passkeys and magic links). Everything is available via API and client SDKs.
+
+Admin identity management (listing, creating, banning, or impersonating users) is **not** part of the open-source core. You can read identities through the service-role `GET /v1/auth/identities` endpoint or manage them directly via the [Ory Kratos Admin API](https://www.ory.sh/docs/kratos/reference/api). Full admin identity management is a Truss Cloud feature.
 
 ## Setup
 
@@ -23,9 +25,6 @@ With `TRUSS_AUTH_REQUIRED=true`, the dashboard requires login. Set to `false` fo
 Optional configuration:
 
 ```env
-# Restrict registration to invited users only
-TRUSS_INVITE_ONLY=true
-
 # Social/OIDC providers (comma-separated)
 KRATOS_OIDC_PROVIDERS=google,github,apple,microsoft
 
@@ -295,17 +294,9 @@ The Kratos `link` strategy handles token generation, email delivery, and session
 
 ### Social / OIDC Login
 
-Connect 18+ social identity providers for one-click sign-in. Truss displays brand icons for each configured provider.
-
-**Dashboard:** Authentication > Overview (social login buttons)
+Connect 18+ social identity providers for one-click sign-in.
 
 **Supported providers:** Google, GitHub, Apple, Microsoft, Discord, GitLab, Facebook, Twitter/X, LinkedIn, Slack, Spotify, Twitch, Bitbucket, Dropbox, Yandex, VK, Dingtalk, and any custom OIDC provider.
-
-**API Endpoints:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/auth/providers` | List configured OIDC providers with metadata |
 
 **Configuration:**
 
@@ -321,504 +312,18 @@ KRATOS_OIDC_PROVIDERS=google,github,apple,microsoft
 # - mapper_url (Jsonnet identity mapping)
 ```
 
-```bash
-# List configured providers
-curl http://localhost:8787/api/auth/providers \
-  -H "Cookie: truss_session=your-session-token"
-# Returns: [{ "id": "google", "label": "Google", "provider": "google" }, ...]
-```
+Once configured in Kratos, OIDC providers surface as login options in the standard Kratos login flow returned by `GET /api/auth/login`.
 
 ---
 
 ## Identity Management
 
-### User CRUD
+Admin identity operations (listing, creating, updating, banning, or impersonating users) are **not** part of the open-source core. You have two options:
 
-Full create, read, update, and delete operations for user identities.
+- **Read-only via Truss:** the service-role `GET /v1/auth/identities` endpoint lists identities and `GET /v1/auth/identities/:id` returns a single identity (see [Client API](#client-api) below).
+- **Full management via Kratos:** create, update, delete, and manage identities directly through the [Ory Kratos Admin API](https://www.ory.sh/docs/kratos/reference/api) using `KRATOS_ADMIN_URL`.
 
-**Dashboard:** Authentication > Users tab
-
-**API Endpoints:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/auth/identities` | List users (supports search and pagination) |
-| `GET` | `/api/auth/identities/:id` | Get a single user's full identity |
-| `POST` | `/api/auth/identities` | Create a new user |
-| `DELETE` | `/api/auth/identities/:id` | Delete a user |
-
-<Tabs>
-  <TabItem label="JavaScript">
-```javascript
-// List users
-const users = await fetch(`${TRUSS_URL}/api/auth/identities`, {
-  credentials: "include",
-}).then(r => r.json());
-
-// Get a single user
-const user = await fetch(`${TRUSS_URL}/api/auth/identities/${userId}`, {
-  credentials: "include",
-}).then(r => r.json());
-
-// Create a user
-const newUser = await fetch(`${TRUSS_URL}/api/auth/identities`, {
-  method: "POST",
-  credentials: "include",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    email: "user@example.com",
-    password: "securepassword123",
-  }),
-}).then(r => r.json());
-
-// Delete a user
-await fetch(`${TRUSS_URL}/api/auth/identities/${userId}`, {
-  method: "DELETE",
-  credentials: "include",
-});
-```
-  </TabItem>
-  <TabItem label="Python">
-```python
-import requests
-
-TRUSS_URL = "http://localhost:8787"
-cookies = {"truss_session": "your-session-token"}
-
-# List users
-users = requests.get(f"{TRUSS_URL}/api/auth/identities", cookies=cookies).json()
-
-# Get a single user
-user = requests.get(f"{TRUSS_URL}/api/auth/identities/{user_id}", cookies=cookies).json()
-
-# Create a user
-new_user = requests.post(f"{TRUSS_URL}/api/auth/identities", cookies=cookies, json={
-    "email": "user@example.com",
-    "password": "securepassword123",
-}).json()
-
-# Delete a user
-requests.delete(f"{TRUSS_URL}/api/auth/identities/{user_id}", cookies=cookies)
-```
-  </TabItem>
-  <TabItem label="cURL">
-```bash
-# List users
-curl http://localhost:8787/api/auth/identities \
-  -H "Cookie: truss_session=your-session-token"
-
-# Get a single user
-curl http://localhost:8787/api/auth/identities/{id} \
-  -H "Cookie: truss_session=your-session-token"
-
-# Create a user
-curl -X POST http://localhost:8787/api/auth/identities \
-  -H "Content-Type: application/json" \
-  -H "Cookie: truss_session=your-session-token" \
-  -d '{"email": "user@example.com", "password": "securepassword123"}'
-
-# Delete a user
-curl -X DELETE http://localhost:8787/api/auth/identities/{id} \
-  -H "Cookie: truss_session=your-session-token"
-```
-  </TabItem>
-</Tabs>
-
-### Server-Side Search
-
-Search users by email, name, or credentials identifier. The search is performed server-side via Kratos admin API.
-
-**Dashboard:** Authentication > Users tab (search bar)
-
-```bash
-# Search users by email
-curl "http://localhost:8787/api/auth/identities?search=alice@example" \
-  -H "Cookie: truss_session=your-session-token"
-```
-
-The `search` query parameter filters identities by matching against email and name traits.
-
-### Cursor-Based Pagination
-
-The identity list uses Kratos `Link` header-based cursor pagination for efficient infinite scroll through large user sets.
-
-```bash
-# First page (default 100 per page)
-curl "http://localhost:8787/api/auth/identities?per_page=50" \
-  -H "Cookie: truss_session=your-session-token"
-
-# Subsequent pages use the cursor from the previous response
-curl "http://localhost:8787/api/auth/identities?per_page=50&page_token=<cursor>" \
-  -H "Cookie: truss_session=your-session-token"
-```
-
-The response includes pagination metadata parsed from Kratos `Link` headers.
-
-### Batch Operations
-
-Activate, deactivate, or delete up to 100 users at once. Select multiple users in the dashboard and apply a bulk action.
-
-**Dashboard:** Authentication > Users tab (select checkbox > batch action dropdown)
-
-**API Endpoint:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/auth/identities/batch-action` | Apply an action to multiple identities |
-
-```bash
-# Batch deactivate users
-curl -X POST http://localhost:8787/api/auth/identities/batch-action \
-  -H "Content-Type: application/json" \
-  -H "Cookie: truss_session=your-session-token" \
-  -d '{
-    "action": "deactivate",
-    "ids": ["id-1", "id-2", "id-3"]
-  }'
-
-# Batch delete users
-curl -X POST http://localhost:8787/api/auth/identities/batch-action \
-  -H "Content-Type: application/json" \
-  -H "Cookie: truss_session=your-session-token" \
-  -d '{
-    "action": "delete",
-    "ids": ["id-1", "id-2"]
-  }'
-```
-
-Supported actions: `activate`, `deactivate`, `delete`.
-
-### User State Management
-
-Toggle users between active and inactive states. Inactive users cannot log in. The dashboard shows visual status chips (green for active, red for inactive/banned).
-
-**Dashboard:** Authentication > Users tab (status column)
-
-**API Endpoint:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `PATCH` | `/api/auth/identities/:id/state` | Set user state to active or inactive |
-
-```bash
-# Deactivate a user
-curl -X PATCH http://localhost:8787/api/auth/identities/{id}/state \
-  -H "Content-Type: application/json" \
-  -H "Cookie: truss_session=your-session-token" \
-  -d '{"state": "inactive"}'
-
-# Reactivate a user
-curl -X PATCH http://localhost:8787/api/auth/identities/{id}/state \
-  -H "Content-Type: application/json" \
-  -H "Cookie: truss_session=your-session-token" \
-  -d '{"state": "active"}'
-```
-
-### Custom Metadata
-
-Attach arbitrary JSON metadata to any user identity. Kratos supports two metadata buckets:
-- **Public metadata** — visible to the user and client-side code
-- **Admin metadata** — visible only to admin API callers
-
-**Dashboard:** Authentication > Users > select user > Metadata tab (JSON editor)
-
-**API Endpoint:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `PUT` | `/api/auth/identities/:id/metadata` | Update public and/or admin metadata |
-
-```bash
-curl -X PUT http://localhost:8787/api/auth/identities/{id}/metadata \
-  -H "Content-Type: application/json" \
-  -H "Cookie: truss_session=your-session-token" \
-  -d '{
-    "metadata_public": {"display_name": "Alice", "avatar_url": "https://..."},
-    "metadata_admin": {"plan": "pro", "notes": "VIP customer"}
-  }'
-```
-
-### Multiple Identity Schemas
-
-View and manage Kratos identity schemas. Each schema defines the traits (email, name, phone, etc.) that users of that type have.
-
-**Dashboard:** Authentication > Schemas tab
-
-**API Endpoints:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/auth/schemas` | List all identity schemas |
-| `GET` | `/api/auth/schemas/:id` | Get a specific schema with traits table and raw JSON |
-
-```bash
-# List schemas
-curl http://localhost:8787/api/auth/schemas \
-  -H "Cookie: truss_session=your-session-token"
-
-# Get a specific schema
-curl http://localhost:8787/api/auth/schemas/default \
-  -H "Cookie: truss_session=your-session-token"
-```
-
-### User Import (CSV/JSON)
-
-Bulk import users from CSV or JSON files. Supports pre-hashed passwords so you can migrate from other auth providers without forcing password resets.
-
-**Dashboard:** Authentication > Users tab > Import button
-
-**API Endpoint:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/auth/users/import` | Import up to 500 users per batch |
-
-<Tabs>
-  <TabItem label="JSON format">
-```bash
-curl -X POST http://localhost:8787/api/auth/users/import \
-  -H "Content-Type: application/json" \
-  -H "Cookie: truss_session=your-session-token" \
-  -d '{
-    "users": [
-      {"email": "alice@example.com", "password": "pass1234"},
-      {"email": "bob@example.com", "password": "pass5678"},
-      {"email": "carol@example.com", "password": "pass9012"}
-    ]
-  }'
-```
-  </TabItem>
-  <TabItem label="With hashed passwords">
-```bash
-curl -X POST http://localhost:8787/api/auth/users/import \
-  -H "Content-Type: application/json" \
-  -H "Cookie: truss_session=your-session-token" \
-  -d '{
-    "users": [
-      {
-        "email": "alice@example.com",
-        "hashed_password": "$2a$12$abc...",
-        "hash_format": "bcrypt"
-      }
-    ]
-  }'
-```
-  </TabItem>
-</Tabs>
-
-### User Export
-
-Download all users as CSV or JSON for backup, migration, or analysis.
-
-**Dashboard:** Authentication > Users tab > Export button
-
-**API Endpoint:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/auth/users/export` | Export users (format=csv or format=json) |
-
-```bash
-# Export as JSON
-curl "http://localhost:8787/api/auth/users/export?format=json" \
-  -H "Cookie: truss_session=your-session-token" \
-  -o users.json
-
-# Export as CSV
-curl "http://localhost:8787/api/auth/users/export?format=csv" \
-  -H "Cookie: truss_session=your-session-token" \
-  -o users.csv
-```
-
-### Admin Impersonation
-
-Create a session as another user for debugging purposes. This lets an admin see exactly what a user sees without knowing their password.
-
-**Dashboard:** Authentication > Users > select user > Impersonate button
-
-**API Endpoint:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/auth/identities/:id/impersonate` | Create a session token for the target user |
-
-```bash
-curl -X POST http://localhost:8787/api/auth/identities/{id}/impersonate \
-  -H "Cookie: truss_session=your-session-token"
-# Returns: { "session_token": "ory_st_..." }
-```
-
-The returned session token can be used in the `truss_session` cookie to act as the impersonated user.
-
-### User Bans / Blocklist
-
-Ban users with a state change plus metadata flag. Banned users show a red chip indicator in the dashboard and cannot log in.
-
-**Dashboard:** Authentication > Users > select user > Ban / Unban buttons
-
-**API Endpoints:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/auth/identities/:id/ban` | Ban a user (sets state to inactive + ban metadata) |
-| `POST` | `/api/auth/identities/:id/unban` | Unban a user (restores active state + clears ban flag) |
-
-```bash
-# Ban a user
-curl -X POST http://localhost:8787/api/auth/identities/{id}/ban \
-  -H "Cookie: truss_session=your-session-token"
-
-# Unban a user
-curl -X POST http://localhost:8787/api/auth/identities/{id}/unban \
-  -H "Cookie: truss_session=your-session-token"
-```
-
-### Invite-Only Registration
-
-Restrict sign-ups to users who have received an invitation. When enabled, the registration endpoint rejects requests without a valid invite token.
-
-**Configuration:** Set `TRUSS_INVITE_ONLY=true` in your environment.
-
-**Dashboard:** Authentication > Settings (invite-only toggle)
-
-**API Endpoints:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/auth/invite` | Send an invitation email (admin only) |
-| `GET` | `/api/auth/invitations` | List pending invitations (admin only) |
-
-```bash
-# Send an invitation
-curl -X POST http://localhost:8787/api/auth/invite \
-  -H "Content-Type: application/json" \
-  -H "Cookie: truss_session=your-session-token" \
-  -d '{"email": "newuser@example.com"}'
-
-# List pending invitations
-curl http://localhost:8787/api/auth/invitations \
-  -H "Cookie: truss_session=your-session-token"
-```
-
----
-
-## Session Management
-
-### Session Listing
-
-View all active sessions for a user, including device info, IP address, and browser details.
-
-**Dashboard:** Authentication > Users > select user > Sessions tab
-
-**API Endpoint:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/auth/sessions` | List active sessions (optionally filter by identity) |
-
-```bash
-# List all active sessions
-curl http://localhost:8787/api/auth/sessions \
-  -H "Cookie: truss_session=your-session-token"
-
-# List sessions for a specific user
-curl "http://localhost:8787/api/auth/sessions?identity_id={id}" \
-  -H "Cookie: truss_session=your-session-token"
-```
-
-### Session Revocation
-
-Revoke a single session or all sessions for a user.
-
-**Dashboard:** Authentication > Users > select user > Sessions tab > Revoke button
-
-**API Endpoints:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `DELETE` | `/api/auth/sessions/:id` | Revoke a single session |
-| `DELETE` | `/api/auth/identities/:id/sessions` | Revoke all sessions for a user (force logout) |
-
-```bash
-# Revoke a single session
-curl -X DELETE http://localhost:8787/api/auth/sessions/{sessionId} \
-  -H "Cookie: truss_session=your-session-token"
-
-# Force-logout a user (revoke all their sessions)
-curl -X DELETE http://localhost:8787/api/auth/identities/{userId}/sessions \
-  -H "Cookie: truss_session=your-session-token"
-```
-
-### Session Lifespan Configuration
-
-Configure how long sessions last before expiring. The current session TTL is displayed in the security dashboard.
-
-**Dashboard:** Authentication > Security tab (session lifespan display)
-
-Session lifespan is configured in the Kratos configuration file:
-
-```yaml
-# kratos.yml
-session:
-  lifespan: 720h  # 30 days
-  cookie:
-    same_site: Lax
-```
-
-### Device / Browser Tracking
-
-Each session records the IP address and parsed user agent (browser name, OS). This data is displayed in the session list.
-
-**Dashboard:** Authentication > Users > select user > Sessions tab
-
-Session objects include:
-- `devices[].ip_address` — Client IP
-- `devices[].user_agent` — Raw user agent string
-- Parsed browser and OS names for display
-
-### Login History
-
-Full login history with IP address, user agent, timestamp, and success/failure status. Filterable and paginated.
-
-**Dashboard:** Authentication > Audit tab
-
-**API Endpoint:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/auth/login-history` | Get login history (admin only) |
-
-```bash
-curl "http://localhost:8787/api/auth/login-history?limit=50&offset=0" \
-  -H "Cookie: truss_session=your-session-token"
-```
-
-Returns entries with: timestamp, identity ID, email, IP address, user agent, method (password/oidc/passkey), and success status.
-
-### Force Re-Authentication
-
-Revoke all sessions for a user to force them to log in again. Useful when credentials may be compromised.
-
-```bash
-# Force re-auth for a specific user
-curl -X DELETE http://localhost:8787/api/auth/identities/{id}/sessions \
-  -H "Cookie: truss_session=your-session-token"
-```
-
-### Session Extend
-
-Admins can extend an active session's lifespan via the API.
-
-**API Endpoint:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `PATCH` | `/api/auth/sessions/:id/extend` | Extend an active session |
-
-```bash
-curl -X PATCH http://localhost:8787/api/auth/sessions/{sessionId}/extend \
-  -H "Cookie: truss_session=your-session-token"
-```
+Full admin identity management (a user-management GUI, bulk import/export, impersonation, bans, session administration, and login-history analytics) is a Truss Cloud feature.
 
 ---
 
@@ -827,8 +332,6 @@ curl -X PATCH http://localhost:8787/api/auth/sessions/{sessionId}/extend \
 ### Breached Password Detection (HIBP)
 
 Truss integrates with the Have I Been Pwned (HIBP) API to check passwords against known data breaches. When enabled, users cannot set passwords that appear in breach databases.
-
-**Dashboard:** Authentication > Security tab
 
 This is configured in Kratos:
 
@@ -843,22 +346,7 @@ selfservice:
 
 ### Password Policy
 
-Configure minimum password length, similarity checks, and other rules.
-
-**Dashboard:** Authentication > Security tab (password policy display)
-
-**API Endpoint:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/auth/security-config` | Get current security configuration (admin only) |
-
-```bash
-curl http://localhost:8787/api/auth/security-config \
-  -H "Cookie: truss_session=your-session-token"
-```
-
-Returns the active Kratos security configuration including password policy, MFA settings, and session lifespan.
+Configure minimum password length, similarity checks, and other rules. Password policy is set in the Kratos configuration file.
 
 Kratos password policy options:
 
@@ -903,164 +391,32 @@ selfservice:
 
 ---
 
-## Account Recovery & Verification
+## Account Recovery
 
-### Email Verification
-
-Trigger a verification email for a user's email address from the admin dashboard.
-
-**Dashboard:** Authentication > Users > select user > Send Verification button
-
-**API Endpoint:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/auth/identities/:id/send-verification` | Send a verification email to the user |
-
-```bash
-curl -X POST http://localhost:8787/api/auth/identities/{id}/send-verification \
-  -H "Cookie: truss_session=your-session-token"
-```
-
-### Password Recovery
-
-Trigger a recovery email or generate a one-time recovery link for a user.
-
-**Dashboard:** Authentication > Users > select user > Send Recovery / Reset Password buttons
+Users recover their own accounts through the self-service recovery flow (powered by the Kratos `link` or `code` strategy). Recovery is a two-step flow: initialize it, then submit the email along with the returned `flowId`.
 
 **API Endpoints:**
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/auth/identities/:id/send-recovery` | Send a recovery email to the user |
-| `POST` | `/api/auth/identities/:id/reset-password` | Directly reset a user's password (admin) |
+| `GET` | `/api/auth/recovery` | Initialize a recovery flow |
+| `POST` | `/api/auth/recovery` | Submit the recovery request (email → code/link → new password) |
 
 ```bash
-# Send recovery email
-curl -X POST http://localhost:8787/api/auth/identities/{id}/send-recovery \
-  -H "Cookie: truss_session=your-session-token"
+# 1. Initialize a recovery flow (returns a flow with an "id")
+curl http://localhost:8787/api/auth/recovery
 
-# Directly reset a password (admin)
-curl -X POST http://localhost:8787/api/auth/identities/{id}/reset-password \
+# 2. Submit the recovery request
+curl -X POST http://localhost:8787/api/auth/recovery \
   -H "Content-Type: application/json" \
-  -H "Cookie: truss_session=your-session-token" \
-  -d '{"password": "newpassword123"}'
+  -d '{"flowId": "<flow-id>", "email": "user@example.com", "method": "link"}'
 ```
 
-### Recovery Link / Code Generation
-
-Generate a direct recovery link with a 1-hour expiry. Useful for support scenarios where you need to send a user a link manually.
-
-**API Endpoint:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/auth/identities/:id/create-recovery-link` | Generate a one-time recovery link |
-
-```bash
-curl -X POST http://localhost:8787/api/auth/identities/{id}/create-recovery-link \
-  -H "Cookie: truss_session=your-session-token"
-# Returns: { "recovery_link": "https://...", "expires_at": "2026-03-15T..." }
-```
-
-The link expires after 1 hour and can only be used once.
+Email delivery (recovery, verification, welcome) and the email templates are configured in Kratos via its courier settings and Jsonnet/HTML templates. See the [Ory Kratos email docs](https://www.ory.sh/docs/kratos/concepts/email-sms) for template customization.
 
 ---
 
 ## Hooks & Events
-
-### Auth Webhooks
-
-Configure webhooks that fire on authentication events. Each webhook includes HMAC-SHA256 signing for verification and supports test-firing.
-
-**Dashboard:** Authentication > Webhooks tab
-
-**API Endpoints:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/auth/webhooks` | List configured auth webhooks |
-| `PUT` | `/api/auth/webhooks` | Create or update auth webhooks |
-| `POST` | `/api/auth/webhooks/test` | Test-fire a webhook |
-
-**Supported events:** `login`, `register`, `recovery`, `verification`, `logout`
-
-```bash
-# List auth webhooks
-curl http://localhost:8787/api/auth/webhooks \
-  -H "Cookie: truss_session=your-session-token"
-
-# Configure webhooks
-curl -X PUT http://localhost:8787/api/auth/webhooks \
-  -H "Content-Type: application/json" \
-  -H "Cookie: truss_session=your-session-token" \
-  -d '{
-    "webhooks": [{
-      "url": "https://your-server.com/webhook",
-      "events": ["login", "register"],
-      "secret": "your-hmac-secret"
-    }]
-  }'
-
-# Test-fire a webhook
-curl -X POST http://localhost:8787/api/auth/webhooks/test \
-  -H "Content-Type: application/json" \
-  -H "Cookie: truss_session=your-session-token" \
-  -d '{"url": "https://your-server.com/webhook", "secret": "your-hmac-secret"}'
-```
-
-**Verifying webhook signatures (JavaScript):**
-
-```javascript
-import crypto from "node:crypto";
-
-function verifyWebhook(payload, signature, secret) {
-  const expected = crypto
-    .createHmac("sha256", secret)
-    .update(payload)
-    .digest("hex");
-  return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expected)
-  );
-}
-```
-
-### Custom Email Templates
-
-Customize the email templates used for verification, recovery, and welcome emails. Templates support variable substitution.
-
-**Dashboard:** Authentication > Email Templates tab
-
-**API Endpoints:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/auth/email-templates` | List current email templates |
-| `PUT` | `/api/auth/email-templates` | Update email templates |
-
-```bash
-# Get current templates
-curl http://localhost:8787/api/auth/email-templates \
-  -H "Cookie: truss_session=your-session-token"
-
-# Update templates
-curl -X PUT http://localhost:8787/api/auth/email-templates \
-  -H "Content-Type: application/json" \
-  -H "Cookie: truss_session=your-session-token" \
-  -d '{
-    "verification": {
-      "subject": "Verify your email for {{.ApplicationName}}",
-      "body_html": "<h1>Welcome!</h1><p>Click <a href=\"{{.VerificationURL}}\">here</a> to verify.</p>"
-    },
-    "recovery": {
-      "subject": "Reset your password",
-      "body_html": "<p>Click <a href=\"{{.RecoveryURL}}\">here</a> to reset your password.</p>"
-    }
-  }'
-```
-
-**Available template variables:** `{{.VerificationURL}}`, `{{.RecoveryURL}}`, `{{.ApplicationName}}`, `{{.Identity.traits.email}}`.
 
 ### Session Hook
 
@@ -1312,34 +668,9 @@ fmt.Println(session.Identity.Traits.(map[string]interface{})["email"])
   </TabItem>
 </Tabs>
 
-### Auth Overview Dashboard
-
-The Authentication overview shows at-a-glance stats and recent activity.
-
-**Dashboard:** Authentication > Overview tab
-
-**Stats cards:**
-- Total users (active + inactive)
-- Logins in last 24 hours
-- Failed logins in last 24 hours
-
-**API Endpoint:**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/auth/stats` | Get authentication statistics (admin only) |
-
-```bash
-curl http://localhost:8787/api/auth/stats \
-  -H "Cookie: truss_session=your-session-token"
-# Returns: { "total_users": 1234, "logins_24h": 89, "failed_24h": 3 }
-```
-
 ### Audit Log
 
-All authentication actions are logged to the audit trail. Filter by action type, search term, or date range.
-
-**Dashboard:** Authentication > Audit tab
+Authentication actions are logged to the audit trail. Query them by action type, search term, or date range via the client API.
 
 **API Endpoint:**
 
@@ -1353,7 +684,7 @@ curl "http://localhost:8787/v1/audit-logs?action=auth.login&limit=50" \
   -H "apikey: truss_sk_your_key"
 ```
 
-Logged actions include: `auth.login`, `auth.register`, `auth.logout`, `auth.identity.create`, `auth.identity.delete`, `auth.identity.ban`, `auth.identity.unban`, `auth.mfa.totp.setup`, `auth.mfa.webauthn.setup`, and more.
+Logged actions include: `auth.login`, `auth.register`, `auth.logout`, `auth.mfa.totp.setup`, `auth.mfa.webauthn.setup`, and more.
 
 ---
 
@@ -1459,5 +790,3 @@ curl -X POST http://localhost:8787/api/auth/register \
     "password": "securePass123"
   }'
 ```
-
-When `TRUSS_INVITE_ONLY=true`, registration requires a valid invite token.

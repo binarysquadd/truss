@@ -197,7 +197,7 @@ curl -X POST \
   -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "SELECT id, title, ts_rank(search_vector, query) AS rank FROM articles, plainto_tsquery('\''english'\'', $1) query WHERE search_vector @@ query ORDER BY rank DESC LIMIT 20",
+    "sql": "SELECT id, title, ts_rank(search_vector, query) AS rank FROM articles, plainto_tsquery('\''english'\'', $1) query WHERE search_vector @@ query ORDER BY rank DESC LIMIT 20",
     "params": ["search terms here"]
   }'
 ```

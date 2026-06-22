@@ -269,6 +269,27 @@ Reference a segment with `$ref`:
 }
 ```
 
+### Managing segments
+
+Segments have full CRUD endpoints under `/api/flags/segments`. Each change re-syncs the
+flagd config so flag rules that `$ref` the segment pick up the new rules immediately.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/flags/segments` | Create a segment (`segmentKey`, `name`, `description`, `rules`). |
+| `PUT` | `/api/flags/segments/:key` | Update a segment's name, description, or rules. |
+| `DELETE` | `/api/flags/segments/:key` | Delete a segment. |
+
+```bash
+# Update a segment's rules
+curl -X PUT http://localhost:8787/api/flags/segments/beta-testers \
+  -H "Content-Type: application/json" \
+  -d '{ "rules": { "ends_with": [{ "var": "email" }, "@acme.com"] } }'
+
+# Delete a segment
+curl -X DELETE http://localhost:8787/api/flags/segments/beta-testers
+```
+
 ## Environments
 
 Flags support separate configurations per environment. Each environment maintains its own state, targeting rules, and default variants.
@@ -443,7 +464,7 @@ Response:
 curl -X POST http://localhost:8787/api/flags/evaluate/bulk \
   -H "Content-Type: application/json" \
   -d '{
-    "flags": ["new-checkout-flow", "hero-banner", "api-rate-limit"],
+    "flagKeys": ["new-checkout-flow", "hero-banner", "api-rate-limit"],
     "context": {
       "targetingKey": "user_123",
       "plan": "pro"
@@ -475,7 +496,7 @@ All endpoints are prefixed with `/api/flags`. Authentication is required (sessio
 | `GET` | `/api/flags/:key` | Get flag by key |
 | `PUT` | `/api/flags/:key` | Update a flag |
 | `DELETE` | `/api/flags/:key` | Delete a flag |
-| `PATCH` | `/api/flags/:key/state` | Toggle flag state (ENABLED / DISABLED) |
+| `PATCH` | `/api/flags/:key/toggle` | Toggle flag state (ENABLED / DISABLED) |
 | `POST` | `/api/flags/:key/promote` | Promote flag config between environments |
 | `POST` | `/api/flags/evaluate` | Evaluate a single flag |
 | `POST` | `/api/flags/evaluate/bulk` | Evaluate multiple flags |

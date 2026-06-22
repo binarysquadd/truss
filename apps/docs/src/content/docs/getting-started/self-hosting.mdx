@@ -1,0 +1,76 @@
+---
+title: Self-Hosting
+description: Deploy Truss with Docker Compose or the Helm chart, log in, and harden it for production.
+---
+
+The [Quickstart](../quickstart/) runs Truss locally for development. This page covers running
+it for real: Docker Compose for a single box, or the Helm chart for Kubernetes, plus the
+first-login flow and production hardening.
+
+Both paths bring up the full stack: the API, the dashboard, Postgres, the Ory services
+(Kratos, Keto, Hydra, Oathkeeper), MinIO, flagd, and Valkey.
+
+## Docker Compose
+
+For a single host. Copy the example env, fill in generated secrets, and start:
+
+```bash
+cp .env.selfhosted.example .env.selfhosted
+# generate the secrets the file references (DB_PASSWORD, MINIO_*, ENCRYPTION_KEY,
+# KRATOS_*, HYDRA_SECRETS_SYSTEM, VALKEY_PASSWORD) — see the comments in the file
+docker compose -f docker-compose.selfhosted.yml --env-file .env.selfhosted up -d
+```
+
+The dashboard is served at `http://localhost:3000`. The MCP server (if you use it) is at
+`http://localhost:8765/mcp`.
+
+## Kubernetes (Helm)
+
+One `helm install`, no operators required:
+
+```bash
+helm install truss ./charts/truss -n truss --create-namespace \
+  --set secrets.encryptionKey=$(openssl rand -hex 32) \
+  --set secrets.dbPassword=$(openssl rand -hex 16) \
+  --set secrets.minioSecretKey=$(openssl rand -hex 16) \
+  --set secrets.valkeyPassword=$(openssl rand -hex 16)
+
+kubectl -n truss port-forward svc/truss-dashboard 3000:80   # → http://localhost:3000
+```
+
+Images are published at `ghcr.io/binarysquadd/truss-{api,dashboard,mcp}` (override `images.*`
+to pin or replace). For production set `publicUrl` + `corsAllowedOrigins` and front it with
+TLS. Toggle optional components with their flags (e.g. `--set mcp.enabled=false`).
+
+## First login
+
+On first boot, with no account yet, Truss seeds a default admin so you can sign in
+immediately, the same way Grafana and Argo CD do. It only ever runs when the identity store
+is empty, so it never overwrites real users.
+
+- **Email:** `admin@truss.local` (override with `TRUSS_BOOTSTRAP_ADMIN_EMAIL`).
+- **Password:** set `TRUSS_BOOTSTRAP_ADMIN_PASSWORD` for a known value, or leave it blank and
+  a random one is printed once to the API logs:
+
+  ```bash
+  docker compose logs truss-api | grep "Default admin"          # Compose
+  kubectl -n truss logs deploy/truss-api | grep "Default admin"  # Kubernetes
+  ```
+
+Change it right after logging in under **Settings → Account → Change Password**. To opt out
+entirely, set `TRUSS_BOOTSTRAP_ADMIN=false` and register the first user yourself.
+
+See [Configuration](../configuration/) for the full list of environment variables.
+
+## Hardening (read before exposing to the internet)
+
+- **`CORS_ALLOWED_ORIGINS`** — set to your dashboard origin(s). CORS fails closed; if unset,
+  the browser app cannot reach the API (intentional).
+- **`ENCRYPTION_KEY`** — a random 32+ char string used to encrypt saved connection passwords.
+  **If you lose it, those are unrecoverable.** Set it once and back it up.
+- **`COOKIE_SECURE`** — the session cookie is marked `Secure` only when you serve over HTTPS.
+  Serving over plain HTTP keeps it off so the cookie is not dropped; set `COOKIE_SECURE=true`
+  behind an HTTPS-terminating proxy the API cannot detect.
+- **`TRUSS_ADMIN_IDENTITY_IDS`** — admin-only features (DB roles, migrations, backups, authz
+  rules) are gated. Grant admin by setting this to your Kratos identity ID(s), comma-separated.
+- Put the API behind TLS, run Postgres with backups (PITR), and never run with dev defaults.

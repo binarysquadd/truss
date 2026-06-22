@@ -43,6 +43,7 @@ export default defineConfig({
           items: [
             { label: "Introduction", slug: "" },
             { label: "Quickstart", slug: "getting-started/quickstart" },
+            { label: "Self-Hosting", slug: "getting-started/self-hosting" },
             { label: "Configuration", slug: "getting-started/configuration" },
           ],
         },
@@ -68,6 +69,7 @@ export default defineConfig({
             { label: "Feature Flags", slug: "guides/feature-flags" },
             { label: "Cache / KV", slug: "guides/cache-kv" },
             { label: "API Keys", slug: "guides/api-keys" },
+            { label: "MCP Server", slug: "guides/mcp" },
             { label: "Drizzle ORM", slug: "guides/drizzle" },
             { label: "Prisma", slug: "guides/prisma" },
             { label: "Migrate from Supabase", slug: "guides/migrate-from-supabase" },

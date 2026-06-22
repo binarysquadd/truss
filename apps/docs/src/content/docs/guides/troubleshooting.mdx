@@ -43,22 +43,6 @@ Port 587 with STARTTLS is the recommended standard for authenticated mail submis
 
 ---
 
-## Demo mode leaking into authenticated sessions
-
-**Symptoms:** After logging in, you still see the demo dashboard or get redirected to `/demo/`.
-
-**Cause:** The demo session cookie persists after login, and the session refresh logic detects the demo tenant.
-
-**Solution:**
-
-1. Clear all browser cookies for your Truss domain.
-2. Navigate directly to your dashboard URL (not `/demo/`).
-3. If the issue persists, open DevTools > Application > Cookies and delete any cookie containing `demo` or `ory_kratos_session`.
-
-The `refreshSession` guard is designed to block demo tenants on non-`/demo/` paths, but stale cookies can bypass this check.
-
----
-
 ## Session not established after login
 
 **Symptoms:** Login succeeds (Kratos returns a session), but the dashboard shows "Not authenticated" or redirects back to login.

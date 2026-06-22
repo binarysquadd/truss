@@ -144,10 +144,13 @@ const { results } = await fetch(`${TRUSS_URL}/v1/sql/transaction`, {
 
 ## File uploads
 
+The presign-upload endpoint lives on the dashboard API (`/api/*`), which is authenticated by the dashboard **session cookie** — not an API key. It is not part of the API-key `/v1` surface, so this example only works from a browser session that is already signed in to the Truss dashboard (the request must carry the session cookie). It is a dashboard-only flow, not a server-to-server one.
+
 ```typescript
-// 1. Get a presigned upload URL
+// 1. Get a presigned upload URL (dashboard session required — sends the session cookie)
 const { url, headers } = await fetch(`${TRUSS_URL}/api/storage/buckets/my-bucket/objects/presign-upload`, {
   method: 'POST',
+  credentials: 'include',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ key: 'photos/avatar.jpg', contentType: 'image/jpeg' }),
 }).then(r => r.json());
