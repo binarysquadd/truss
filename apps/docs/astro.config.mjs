@@ -73,6 +73,7 @@ export default defineConfig({
             { label: "Drizzle ORM", slug: "guides/drizzle" },
             { label: "Prisma", slug: "guides/prisma" },
             { label: "Migrate from Supabase", slug: "guides/migrate-from-supabase" },
+            { label: "Observability", slug: "guides/observability" },
             { label: "Troubleshooting", slug: "guides/troubleshooting" },
           ],
         },

@@ -1,0 +1,77 @@
+# Bundled LGTM observability stack — OPT-IN, batteries-included for self-hosters who don't
+# already run monitoring. Layer it on top of the self-hosted stack:
+#
+#   docker compose -f docker-compose.selfhosted.yml -f docker-compose.observability.yml --env-file .env.selfhosted up -d
+#
+# Then open Grafana at http://localhost:3001 (anonymous admin) — it comes pre-wired with
+# Prometheus (metrics), Loki (logs), and Tempo (traces) datasources + the Truss API dashboard.
+#
+# Pipeline: Prometheus pulls truss-api:8787/metrics · the API pushes OTLP traces to the
+# collector → Tempo · Promtail ships container logs → Loki · Grafana queries all three.
+services:
+  # Point the API's tracing at the bundled collector (otel.js is dormant until this is set).
+  truss-api:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    volumes:
+      - ./selfhosted/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  loki:
+    image: grafana/loki:3.3.2
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./selfhosted/observability/loki-config.yaml:/etc/loki/config.yaml:ro
+      - loki_data:/loki
+
+  promtail:
+    image: grafana/promtail:3.3.2
+    restart: unless-stopped
+    command: ["-config.file=/etc/promtail/config.yaml"]
+    volumes:
+      - ./selfhosted/observability/promtail.yaml:/etc/promtail/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [loki]
+
+  tempo:
+    image: grafana/tempo:2.7.0
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo/config.yaml"]
+    volumes:
+      - ./selfhosted/observability/tempo.yaml:/etc/tempo/config.yaml:ro
+      - tempo_data:/var/tempo
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.117.0
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./selfhosted/observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    depends_on: [tempo]
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./selfhosted/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./charts/truss/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+    depends_on: [prometheus, loki, tempo]
+
+volumes:
+  loki_data:
+  tempo_data:

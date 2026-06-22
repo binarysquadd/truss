@@ -1,0 +1,73 @@
+---
+title: Observability
+description: Metrics, logs, and traces from Truss — plug into your stack, or run the bundled one.
+---
+
+Truss follows one principle here: **instrument, don't impose.** It always emits signals in
+standard formats so any monitoring stack can ingest them, and it never forces a heavy stack
+on you. You can wire it into whatever you already run, or spin up a bundled Grafana stack.
+
+## What the API always exposes
+
+- **Metrics** — a Prometheus endpoint at **`/metrics`** (unauthenticated; scrape it on your
+  internal network). It carries the RED signals (request **R**ate, **E**rrors, **D**uration)
+  as one histogram labeled by `method` / `route` / `status_code`, plus a Postgres pool gauge
+  and Node process metrics (CPU, memory, event-loop lag, GC).
+- **Logs** — structured JSON to stdout (pino), with secrets redacted. Any collector that
+  reads container stdout (Promtail, Alloy, Fluent Bit, a cloud agent) can ship them.
+- **Traces** — **opt-in.** Set `OTEL_EXPORTER_OTLP_ENDPOINT` and the API exports OpenTelemetry
+  traces (auto-instrumented HTTP → Express route → Postgres / Redis queries). Unset, tracing
+  is fully dormant and costs nothing. When tracing is on, every log line is stamped with the
+  active `trace_id`, so you can pivot metric → trace → logs.
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP endpoint for trace export (e.g. `http://collector:4318`) | (unset → off) |
+| `OTEL_SERVICE_NAME` | Service name on spans | `truss-api` |
+| `LOG_LEVEL` | pino log level | `info` |
+
+## Plug into your existing stack
+
+- **Prometheus:** scrape `truss-api:8787/metrics`.
+- **Logs:** point your collector at the API container's stdout.
+- **Traces:** set `OTEL_EXPORTER_OTLP_ENDPOINT` to your collector / Tempo / vendor OTLP URL.
+
+### Kubernetes (Prometheus operator)
+
+If you run `kube-prometheus-stack`, flip on the chart's opt-in artifacts (all default-off):
+
+```bash
+helm upgrade truss ./charts/truss \
+  --set observability.serviceMonitor.enabled=true \
+  --set observability.prometheusRule.enabled=true \
+  --set observability.grafanaDashboard.enabled=true \
+  --set observability.otlpEndpoint=http://otel-collector.monitoring:4318
+```
+
+That creates a `ServiceMonitor` (the operator auto-scrapes `/metrics`), a `PrometheusRule`
+with three SLO alerts (error rate > 1%, p95 > 500ms, DB-pool saturation), and a Grafana
+dashboard `ConfigMap` the Grafana sidecar auto-loads.
+
+## Bundled stack (batteries-included)
+
+If you don't run monitoring, layer the bundled LGTM stack onto Docker Compose:
+
+```bash
+docker compose -f docker-compose.selfhosted.yml -f docker-compose.observability.yml \
+  --env-file .env.selfhosted up -d
+```
+
+That adds Prometheus, Loki + Promtail, Tempo, an OTel Collector, and Grafana — pre-wired:
+Prometheus scrapes `/metrics`, the API exports traces to the collector → Tempo, Promtail
+ships container logs → Loki. Open **Grafana at http://localhost:3001** (anonymous admin);
+the **Truss API** dashboard and all three datasources are already provisioned.
+
+## SLOs worth alerting on
+
+Start with three, alert on burn rate rather than every blip:
+
+- **Availability** — `rate(...status_code=~"5..")` / total < 1%
+- **Latency** — `histogram_quantile(0.95, ...)` under your target (e.g. 500ms)
+- **Saturation** — `truss_db_pool_connections{state="waiting"}` should stay at 0
+
+The bundled `PrometheusRule` ships these as a starting point.

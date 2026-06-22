@@ -120,6 +120,17 @@ Cache panel reports "not configured" and the rest of Truss runs normally.
 `VALKEY_PASSWORD` is the cache service's own auth and is unrelated to the dashboard
 login. The bundled Compose and Helm setups generate it for you.
 
+## Observability
+
+Metrics (`/metrics`) and structured JSON logs are always on. Tracing is opt-in. See the
+[Observability guide](../../guides/observability/) for the full setup.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP endpoint for trace export (e.g. `http://collector:4318`). Unset = tracing off. | (none) |
+| `OTEL_SERVICE_NAME` | Service name attached to spans | `truss-api` |
+| `LOG_LEVEL` | pino log level (`debug`/`info`/`warn`/`error`) | `info` |
+
 ## Cross-Origin
 
 | Variable | Description | Default |
