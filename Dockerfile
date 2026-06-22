@@ -19,9 +19,12 @@ RUN npm install --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
 COPY apps/api/db ./db
+# OTel bootstrap is loaded via --import (before the app) so it can patch http/express/pg.
+# It is self-contained (only OpenTelemetry imports) and no-ops unless an exporter is configured.
+COPY apps/api/src/otel.js ./otel.js
 
 EXPOSE 8787
 
 USER node
 
-CMD ["node", "dist/index.mjs"]
+CMD ["node", "--import", "./otel.js", "dist/index.mjs"]
