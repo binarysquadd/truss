@@ -14,6 +14,9 @@ images:
   dashboard:
     repository: ghcr.io/binarysquadd/truss-dashboard
     tag: ""        # defaults to .Chart.AppVersion when empty
+  mcp:
+    repository: ghcr.io/binarysquadd/truss-mcp
+    tag: ""        # defaults to .Chart.AppVersion when empty
   postgres: postgres:16-alpine
   kratos: oryd/kratos:v1.2.0
   keto: oryd/keto:v0.12.0-alpha.0
@@ -65,6 +68,12 @@ adminIdentityIds: ""
 # right after install. The password is generated + printed to the API logs on first
 # boot (`kubectl -n truss logs deploy/truss-api`) — change it after first login.
 bootstrapAdminEmail: "admin@truss.local"
+
+# MCP server (lets an AI agent operate this instance over the Model Context Protocol).
+# Exposed in-cluster as Service truss-mcp:8765 at /mcp; front it with your ingress to
+# expose it externally. Callers authenticate with a service_role key.
+mcp:
+  enabled: true
 
 resources:
   small: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 500m, memory: 256Mi } }

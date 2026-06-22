@@ -584,6 +584,21 @@ services:
       # Main entry point — users access the dashboard here.
       - "3000:80"
 
+  # MCP server — lets an AI agent operate this instance over the Model Context Protocol
+  # at http://localhost:8765/mcp. Callers authenticate with a service_role key
+  # (Authorization: Bearer truss_sk_...). Talks to the API over the internal network.
+  truss-mcp:
+    build:
+      context: ./apps/mcp
+    restart: unless-stopped
+    depends_on:
+      - truss-api
+    environment:
+      TRUSS_API_URL: http://truss-api:8787
+      MCP_PORT: "8765"
+    ports:
+      - "8765:8765"
+
 volumes:
   truss_postgres_data:
   truss_minio_data:
