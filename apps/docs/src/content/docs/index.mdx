@@ -3,7 +3,7 @@ title: Welcome to Truss
 description: The open-source backend you self-host. Postgres, Auth, Permissions, Storage, Realtime — one dashboard you own.
 template: splash
 hero:
-  tagline: Postgres, Auth, OAuth2, Permissions, S3 Storage, Feature Flags, Realtime, and Webhooks — one dashboard you own, self-hosted.
+  tagline: Postgres, Auth, OAuth2, Permissions, Storage, Cache, Feature Flags, Realtime, and Webhooks — one dashboard you own, self-hosted.
   actions:
     - text: Get Started
       link: ./getting-started/quickstart/
@@ -24,19 +24,27 @@ Truss is the open-source, self-hosted backend console. Think Supabase or Firebas
 
 It provides a unified dashboard and client API for:
 
-- **PostgreSQL** — SQL workbench, schema browser, ERD visualizer, pgvector, full-text search, cron jobs
-- **Authentication** — Email/password and social login (powered by Ory Kratos)
-- **Authorization** — Relation-based access control / ReBAC (powered by Ory Keto)
-- **Storage** — S3-compatible file storage with presigned URLs (powered by MinIO)
+- **PostgreSQL** — SQL workbench, schema browser + ERD, Auto-REST, pgvector, full-text search, cron jobs, branching, migrations, extensions, and foreign data wrappers
+- **Authentication** — email/password, social login, passkeys, and MFA (powered by Ory Kratos)
+- **Authorization** — relation-based access control / ReBAC (powered by Ory Keto)
+- **OAuth2 / OIDC** — issue tokens and run consent flows as your own identity provider (powered by Ory Hydra)
+- **API Gateway** — declarative authn/authz in front of your own services (powered by Ory Oathkeeper)
+- **Storage** — S3-compatible object storage with presigned URLs (powered by MinIO)
+- **Cache / KV** — Redis-compatible cache and key-value store (powered by Valkey)
 - **Realtime** — WebSocket subscriptions via PostgreSQL LISTEN/NOTIFY
-- **Webhooks** — HTTP callbacks on database changes with HMAC signing
+- **Webhooks** — HMAC-signed HTTP callbacks on database changes
+- **Feature Flags** — runtime flags and targeting (OpenFeature / flagd)
+
+It also ships an [MCP server](./guides/mcp/) so an AI agent can operate the instance, and
+built-in [observability](./guides/observability/) — Prometheus metrics, OpenTelemetry traces,
+and structured logs, on by default.
 
 ## Client API
 
-Every feature is accessible through a REST API on port 8787. Two API layers:
+Every feature is reachable through a REST API, served on the same origin as the dashboard. Two layers:
 
 - **Data API** (`/v1/db/:table`, `/v1/sql`) — CRUD your tables, run SQL, call functions
-- **Management API** (`/v1/status`, `/v1/keys`, etc.) — Platform management for CLI, bots, and LLMs
+- **Management API** (`/v1/status`, `/v1/keys`, etc.) — manage the platform from a CLI, bot, or LLM
 
 All client API endpoints require an API key passed via the `apikey` header.
 
