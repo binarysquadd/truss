@@ -1,10 +1,20 @@
 import pino from "pino";
+import { trace } from "@opentelemetry/api";
 
 const isProduction = process.env.NODE_ENV === "production";
 const level = process.env.LOG_LEVEL || "info";
 
+// Trace–log correlation: when a span is active (tracing enabled), stamp every log line with
+// the trace/span id so you can pivot from a metric spike → the trace → these exact logs.
+// No-ops when tracing is off (no active span) — `@opentelemetry/api` returns a no-op there.
+function traceMixin() {
+  const ctx = trace.getActiveSpan()?.spanContext();
+  return ctx?.traceId ? { trace_id: ctx.traceId, span_id: ctx.spanId } : {};
+}
+
 const logger = pino({
   level,
+  mixin: traceMixin,
   // Redact secrets that may appear in logged objects (auth headers, cookies, tokens, keys)
   redact: {
     paths: [

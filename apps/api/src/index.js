@@ -23,6 +23,7 @@ import { bootstrapAdmin } from "./lib/bootstrap-admin.js";
 import { csrfMiddleware } from "./lib/csrf.js";
 import { resolveApiKey } from "./lib/api-keys.js";
 import { requestLogger, globalErrorHandler, cleanupOldLogs } from "./lib/observability.js";
+import { metricsMiddleware, metricsHandler } from "./lib/metrics.js";
 import { seedDemoData } from "./lib/demo/index.js";
 import { seedDevTenants } from "./lib/dev-tenants.js";
 import swaggerUi from "swagger-ui-express";
@@ -117,6 +118,12 @@ app.use((req, res, next) => {
   if (req.path === "/api/billing/webhook") return next();
   express.json({ limit: "256kb" })(req, res, next);
 });
+
+// ─── Observability: time every request + expose Prometheus metrics ───
+// /metrics is intentionally unauthenticated (Prometheus scrapes it on the internal
+// network) and lives at the root, so the /api/ rate limiter never throttles scrapes.
+app.use(metricsMiddleware);
+app.get("/metrics", metricsHandler);
 
 // ─── Waitlist signup (public endpoint — CORS handled above, before Helmet) ───
 let _waitlistTableReady = false;
