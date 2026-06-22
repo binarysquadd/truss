@@ -526,6 +526,10 @@ services:
       # http:// (e.g. localhost) → no Secure (so the cookie isn't dropped over plain
       # HTTP); https:// → Secure. Override with COOKIE_SECURE=true/false if needed.
       TRUSS_PUBLIC_URL: "${TRUSS_PUBLIC_URL:-http://localhost:3000}"
+      # Tracing is opt-in. Empty = off. The bundled observability overlay sets this to the
+      # OTel Collector; or point it at your own collector. Metrics (/metrics) + JSON logs are
+      # always on regardless.
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
 
       # ── Database ──
       DATABASE_URL: postgres://truss:${DB_PASSWORD}@postgres:5432/truss?sslmode=disable

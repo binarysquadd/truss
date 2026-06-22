@@ -75,6 +75,23 @@ bootstrapAdminEmail: "admin@truss.local"
 mcp:
   enabled: true
 
+# Observability — all OFF by default ("instrument, don't impose"). The API always exposes
+# Prometheus metrics at /metrics and structured JSON logs to stdout regardless; these toggles
+# only add integration artifacts for clusters already running the Prometheus operator / Grafana.
+observability:
+  # OTLP endpoint for trace export, e.g. http://otel-collector.monitoring:4318. Empty = tracing off.
+  otlpEndpoint: ""
+  # Create a ServiceMonitor so the Prometheus operator auto-scrapes /metrics (needs its CRDs).
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+  # Create a PrometheusRule with the default SLO alerts (needs the operator CRDs).
+  prometheusRule:
+    enabled: false
+  # Ship the Grafana dashboard as a ConfigMap the Grafana sidecar auto-discovers.
+  grafanaDashboard:
+    enabled: false
+
 resources:
   small: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 500m, memory: 256Mi } }
   medium: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: "1", memory: 1Gi } }

@@ -1,0 +1,65 @@
+{{- if .Values.observability.serviceMonitor.enabled }}
+# ServiceMonitor — the Prometheus operator turns this into scrape config for /metrics.
+# Requires the operator CRDs (e.g. kube-prometheus-stack); off by default.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: truss-api
+  labels: { app: truss-api }
+spec:
+  selector:
+    matchLabels: { app: truss-api }
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.observability.serviceMonitor.interval | default "30s" }}
+{{- end }}
+{{- if .Values.observability.prometheusRule.enabled }}
+---
+# PrometheusRule — the three SLO alerts (error rate, p95 latency, DB-pool saturation),
+# all derived from the metrics the API exposes. Requires the operator CRDs.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: truss-api
+  labels: { app: truss-api }
+spec:
+  groups:
+    - name: truss-api.slo
+      rules:
+        - alert: TrussApiHighErrorRate
+          expr: |
+            sum(rate(truss_http_request_duration_seconds_count{service="truss-api",status_code=~"5.."}[5m]))
+              / sum(rate(truss_http_request_duration_seconds_count{service="truss-api"}[5m])) > 0.01
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: "Truss API 5xx error rate above 1% (5m)"
+        - alert: TrussApiHighLatencyP95
+          expr: |
+            histogram_quantile(0.95, sum by (le) (rate(truss_http_request_duration_seconds_bucket{service="truss-api"}[5m]))) > 0.5
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: "Truss API p95 latency above 500ms (10m)"
+        - alert: TrussApiDbPoolSaturated
+          expr: truss_db_pool_connections{service="truss-api",state="waiting"} > 0
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: "Truss API DB pool has waiting connections (saturated)"
+{{- end }}
+{{- if .Values.observability.grafanaDashboard.enabled }}
+---
+# Grafana dashboard shipped as a ConfigMap; the Grafana sidecar auto-loads any ConfigMap
+# labeled grafana_dashboard. Dashboard JSON lives in charts/truss/dashboards/.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: truss-api-dashboard
+  labels:
+    grafana_dashboard: "1"
+data:
+  truss-api.json: |
+{{ .Files.Get "dashboards/truss-api.json" | indent 4 }}
+{{- end }}

@@ -1,0 +1,115 @@
+{
+  "title": "Truss API",
+  "uid": "truss-api",
+  "tags": ["truss"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "label": "Prometheus"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "title": "Request rate (req/s)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route) (rate(truss_http_request_duration_seconds_count{service=\"truss-api\"}[5m]))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "title": "p95 latency (s)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(truss_http_request_duration_seconds_bucket{service=\"truss-api\"}[5m])))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "title": "5xx error rate (%)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "percent", "decimals": 2 } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * sum(rate(truss_http_request_duration_seconds_count{service=\"truss-api\",status_code=~\"5..\"}[5m])) / clamp_min(sum(rate(truss_http_request_duration_seconds_count{service=\"truss-api\"}[5m])), 1)"
+        }
+      ]
+    },
+    {
+      "title": "5xx by route",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route) (rate(truss_http_request_duration_seconds_count{service=\"truss-api\",status_code=~\"5..\"}[5m]))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "title": "DB pool connections",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "truss_db_pool_connections{service=\"truss-api\"}",
+          "legendFormat": "{{state}}"
+        }
+      ]
+    },
+    {
+      "title": "Event-loop lag p99 (s)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nodejs_eventloop_lag_p99_seconds{service=\"truss-api\"}",
+          "legendFormat": "p99 lag"
+        }
+      ]
+    },
+    {
+      "title": "Resident memory (bytes)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "process_resident_memory_bytes{service=\"truss-api\"}",
+          "legendFormat": "rss"
+        }
+      ]
+    }
+  ]
+}
