@@ -30,6 +30,9 @@ jobs:
           - name: truss-dashboard
             context: .
             dockerfile: selfhosted/Dockerfile.dashboard
+          - name: truss-mcp
+            context: apps/mcp
+            dockerfile: apps/mcp/Dockerfile
     steps:
       - uses: actions/checkout@v4
 

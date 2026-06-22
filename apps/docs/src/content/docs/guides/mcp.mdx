@@ -1,0 +1,75 @@
+---
+title: MCP Server
+description: Operate a Truss instance from an AI agent over the Model Context Protocol.
+---
+
+Truss ships a [Model Context Protocol](https://modelcontextprotocol.io) server so an AI
+agent (Claude Code, Claude Desktop, Cursor, and others) can operate your instance in plain
+language: inspect the schema, run read-only SQL, read and write table rows, and manage API
+keys, OAuth2 clients, and your project's settings.
+
+It is a thin wrapper over the API-key-authed [`/v1` client API](../api-reference/rest-api/).
+There are no model calls inside the server, it is purely an interface, so there is no AI
+lock-in and nothing extra to pay for.
+
+## Auth
+
+Create a **service_role** key (`truss_sk_...`) under **Settings → API Keys**. The server
+inherits that key's scope, so issue a dedicated key for the agent and rotate it like any
+other credential.
+
+## Local (stdio)
+
+The agent runs the server as a subprocess.
+
+```bash
+# Claude Code
+claude mcp add truss -- env TRUSS_API_URL=https://your-truss.example.com TRUSS_API_KEY=truss_sk_xxx \
+  node /path/to/truss/apps/mcp/src/index.js
+```
+
+```json
+// Claude Desktop / Cursor (mcpServers)
+{
+  "mcpServers": {
+    "truss": {
+      "command": "node",
+      "args": ["/path/to/truss/apps/mcp/src/index.js"],
+      "env": { "TRUSS_API_URL": "https://your-truss.example.com", "TRUSS_API_KEY": "truss_sk_xxx" }
+    }
+  }
+}
+```
+
+## Hosted (HTTP)
+
+The bundled Docker Compose and Helm setups run the server over Streamable HTTP at
+`POST /mcp` (service `truss-mcp`, port `8765`). Front it with your ingress and point your
+agent at `https://your-truss.example.com/mcp`, passing the key as
+`Authorization: Bearer truss_sk_...`. It is stateless and scopes each request to the key.
+
+In Helm it is on by default; disable with `--set mcp.enabled=false`.
+
+## Tools
+
+- **Introspection** — `truss_status`, `truss_list_modules`, `truss_database_schema`, `truss_describe_table`
+- **SQL + data** — `truss_run_sql` (read-only), `truss_query_table`, `truss_insert_rows`, `truss_update_rows`, `truss_delete_rows`
+- **Control plane** — API keys (`list`/`create`/`revoke`), OAuth2 clients (`list`/`create`/`delete`), `truss_update_project`
+- **Reads** — buckets, identities, projects, webhooks, branches, backups
+
+Tools carry `readOnlyHint` / `destructiveHint` annotations. `truss_update_rows` and
+`truss_delete_rows` refuse to run without filters, so a stray call never touches an entire
+table. Row filters are PostgREST-style, e.g. `{ "status": "eq.active" }`.
+
+## Resources & prompts
+
+Resources expose read-only context the agent can browse without a tool call:
+`truss://status`, `truss://schema`, `truss://modules`, and `truss://table/{schema}/{table}`.
+Prompts (`explore_database`, `audit_identities`) are canned workflows.
+
+## Notes
+
+- SQL is read-only (SELECT / WITH / EXPLAIN); writes go through the row tools.
+- Ad-hoc bucket creation and flag mutation are intentionally not exposed (buckets are
+  provisioned per project; flags use a variant/targeting model). Full OAuth 2.1 for the HTTP
+  transport is future work, bearer service-role keys over HTTPS are the current model.

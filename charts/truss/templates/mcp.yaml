@@ -1,0 +1,41 @@
+{{- if .Values.mcp.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: truss-mcp
+spec:
+  selector: { app: truss-mcp }
+  ports: [{ port: 8765, targetPort: 8765 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: truss-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: truss-mcp }
+  template:
+    metadata:
+      labels: { app: truss-mcp }
+    spec:
+      containers:
+        - name: truss-mcp
+          image: "{{ .Values.images.mcp.repository }}:{{ .Values.images.mcp.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          # Dockerfile runs as `USER node` (uid 1000); pin it so kube verifies non-root.
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop: ["ALL"]
+          ports: [{ containerPort: 8765 }]
+          env:
+            - { name: TRUSS_API_URL, value: "http://truss-api:8787" }
+            - { name: MCP_PORT, value: "8765" }
+          readinessProbe: { httpGet: { path: /health, port: 8765 }, initialDelaySeconds: 5, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /health, port: 8765 }, initialDelaySeconds: 15, periodSeconds: 30 }
+          resources: {{- toYaml .Values.resources.small | nindent 12 }}
+{{- end }}
