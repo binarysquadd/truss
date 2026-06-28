@@ -3,7 +3,6 @@ import { getPool, getPoolForDatabase } from "./state.js";
 import { getTenantDbName, provisionTenantDatabase } from "./tenant-db.js";
 import { logLogin, logSecurityEvent } from "./observability.js";
 import { ensureInternalSchema, writeAuditLog } from "./internal.js";
-import { ensureDemoSeeded } from "./demo/index.js";
 import { generateApiKey } from "./api-keys.js";
 import { encryptValue } from "../routes/connections.js";
 import logger from "./logger.js";
@@ -12,7 +11,7 @@ const API_BASE_URL = process.env.API_URL || process.env.VITE_API_BASE_URL || `ht
 
 const log = logger.child({ module: "session" });
 
-function parseCookie(cookieHeader, name) {
+export function parseCookie(cookieHeader, name) {
   const match = cookieHeader.split(";").map(c => c.trim()).find(c => c.startsWith(`${name}=`));
   return match ? decodeURIComponent(match.split("=")[1]) : null;
 }
@@ -32,7 +31,6 @@ function sanitizeError(error) {
 const KRATOS_PUBLIC_URL = process.env.KRATOS_PUBLIC_URL || "http://127.0.0.1:4433";
 let AUTH_REQUIRED = process.env.TRUSS_AUTH_REQUIRED !== "false"; // default true
 const ADMIN_IDENTITY_IDS = (process.env.TRUSS_ADMIN_IDENTITY_IDS || "").split(",").map(s => s.trim()).filter(Boolean);
-const DEMO_MODE = process.env.TRUSS_DEMO_MODE === "true";
 
 // Safety: force auth on in production even if TRUSS_AUTH_REQUIRED=false
 if (!AUTH_REQUIRED && process.env.NODE_ENV === "production") {
@@ -41,45 +39,6 @@ if (!AUTH_REQUIRED && process.env.NODE_ENV === "production") {
 }
 if (!AUTH_REQUIRED) {
   log.warn("authentication DISABLED (TRUSS_AUTH_REQUIRED=false) — all requests get admin access");
-}
-
-// ─── Demo tenant (read-only anonymous access) ───
-// All demo users share the same tenant ID — demo is read-only so per-IP isolation isn't needed.
-// Rate limiting is still per-IP (see checkDemoRateLimit below).
-function makeDemoTenant(_ip) {
-  return {
-    id: "demo",
-    identityId: "demo",
-    email: "demo@truss.dev",
-    displayName: "Demo User",
-    plan: "starter",
-    isAdmin: false,
-    isDemo: true,
-  };
-}
-
-// ─── Demo rate limiter: 100 requests per IP per hour ───
-const DEMO_RATE_LIMIT = Number(process.env.DEMO_RATE_LIMIT) || 100;
-const DEMO_RATE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
-const demoRateLimits = new Map(); // IP -> { count, resetAt }
-
-// Evict stale rate limit entries every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of demoRateLimits) {
-    if (entry.resetAt <= now) demoRateLimits.delete(ip);
-  }
-}, 5 * 60_000).unref();
-
-function checkDemoRateLimit(ip) {
-  const now = Date.now();
-  let entry = demoRateLimits.get(ip);
-  if (!entry || entry.resetAt <= now) {
-    entry = { count: 0, resetAt: now + DEMO_RATE_WINDOW_MS };
-    demoRateLimits.set(ip, entry);
-  }
-  entry.count++;
-  return entry.count <= DEMO_RATE_LIMIT;
 }
 
 // Simple session cache: cookie -> { tenant, expiresAt }
@@ -302,36 +261,15 @@ async function autoProvisionDefaults(tenantId, email, pool) {
 // Paths that skip auth entirely (login/register must be reachable without a session)
 const EXEMPT_PATHS = ["/api/health", "/api/auth/login", "/api/auth/register", "/api/auth/recovery", "/api/billing/webhook"];
 
-// Check if this request is asking for demo access (header or query param).
-// Per-request demo mode ONLY works when TRUSS_DEMO_MODE env var is explicitly "true".
-function isDemoRequest(req) {
-  if (!DEMO_MODE) return false;
-  return req.headers["x-demo"] === "true";
-}
-
-// Attach rate-limited demo tenant or reject. Lazy-seeds demo data on first hit.
-function attachDemoTenant(req, res, next) {
-  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || "unknown";
-  if (!checkDemoRateLimit(ip)) {
-    return res.status(429).json({ error: "Demo rate limit exceeded. Sign up for full access." });
-  }
-  req.tenant = makeDemoTenant(ip);
-  // Lazy-seed demo data on first demo request (fire-and-forget, non-blocking)
-  const pool = getPool();
-  if (pool) ensureDemoSeeded(pool).catch(err => log.error({ err: err.message }, "demo seed error"));
-  return next();
-}
-
 export function sessionMiddleware(req, res, next) {
   // Skip auth for exempt paths
   if (EXEMPT_PATHS.some(p => req.path === p || req.path.startsWith(p + "/"))) return next();
   // Skip for /v1/* (uses apiKeyAuth instead)
   if (req.path.startsWith("/v1/")) return next();
+  // Cloud overlay (truss-cloud) may have already attached a tenant in a preSession
+  // middleware (e.g. the demo-tenant resolver). If so, auth is already resolved.
+  if (req.tenant) return next();
   if (!AUTH_REQUIRED) {
-    // Dev mode: check for demo request BEFORE falling through to dev tenant
-    if (isDemoRequest(req)) {
-      return attachDemoTenant(req, res, next);
-    }
     // Dev mode: if user explicitly logged out, don't auto-attach tenant
     const loggedOut = parseCookie(req.headers.cookie || "", "truss_logged_out");
     if (loggedOut) {
@@ -340,10 +278,6 @@ export function sessionMiddleware(req, res, next) {
     }
     // Dev mode: check for dev tenant switcher cookie
     const devTenantId = parseCookie(req.headers.cookie || "", "truss_dev_tenant");
-    if (devTenantId === "demo") {
-      // Demo tenant via dev switcher — attach demo tenant and trigger lazy seed
-      return attachDemoTenant(req, res, next);
-    }
     if (devTenantId && devTenantId !== "local") {
       // Look up the dev tenant from the database
       const pool = getPool();
@@ -369,15 +303,8 @@ export function sessionMiddleware(req, res, next) {
     return next();
   }
 
-  // Per-request demo mode: allow demo access on the same instance without global TRUSS_DEMO_MODE
-  const wantsDemo = isDemoRequest(req);
-
   verifySession(req).then(tenant => {
     if (!tenant) {
-      // Demo access: attach read-only demo tenant (works with global flag OR per-request)
-      if (DEMO_MODE || wantsDemo) {
-        return attachDemoTenant(req, res, next);
-      }
       // /api/auth/session should return 401 gracefully, not block
       if (req.path === "/api/auth/session") return res.status(401).json({ error: "Not authenticated" });
       return res.status(401).json({ error: "Authentication required. Please log in." });
@@ -385,9 +312,6 @@ export function sessionMiddleware(req, res, next) {
     req.tenant = tenant;
     next();
   }).catch(() => {
-    if (DEMO_MODE || wantsDemo) {
-      return attachDemoTenant(req, res, next);
-    }
     if (req.path === "/api/auth/session") return res.status(401).json({ error: "Not authenticated" });
     res.status(401).json({ error: "Authentication required." });
   });
@@ -532,43 +456,6 @@ export function resolveTenantPool(req, res, next) {
 
 // ─── Demo write protection ───
 // Blocks all mutations for demo users. Safe read-only preview.
-const DEMO_READONLY_EXEMPT = [
-  "/api/auth/session",
-  "/api/auth/login",
-  "/api/auth/register",
-  "/api/health",
-  "/api/dev/switch-tenant",
-];
-
-export function demoWriteProtection(req, res, next) {
-  // Only apply to demo users
-  if (!req.tenant?.isDemo) return next();
-
-  // Allow exempt paths (auth flow)
-  if (DEMO_READONLY_EXEMPT.some(p => req.path === p || req.path.startsWith(p + "/"))) return next();
-
-  // Allow GET and HEAD (read-only)
-  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
-
-  // Special case: POST /api/sql is allowed for SELECT queries only
-  // (the SQL route already has its own validation, but we double-check here)
-  if (req.method === "POST" && req.path === "/api/sql") {
-    const sql = (req.body?.sql || "").trim().toUpperCase();
-    const readOnlyPrefixes = ["SELECT", "WITH", "EXPLAIN", "SHOW", "\\D"];
-    if (readOnlyPrefixes.some(p => sql.startsWith(p))) return next();
-    return res.status(403).json({
-      error: "Demo mode is read-only. Sign up for full access.",
-      demo: true,
-    });
-  }
-
-  // Block all other mutations
-  return res.status(403).json({
-    error: "Demo mode is read-only. Sign up for full access.",
-    demo: true,
-  });
-}
-
 // ─── Environment resolution middleware ───
 // Resolves the active environment from x-environment-id header and attaches it as req.environment.
 

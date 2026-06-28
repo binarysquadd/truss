@@ -18,13 +18,12 @@ import { API_PORT, getActiveDatabaseUrl, getPool, consumptionMetrics } from "./l
 import { maskConnectionString } from "./lib/helpers.js";
 import { ensureInternalSchema } from "./lib/internal.js";
 import { realtimeClients, realtimeChannels, bootstrapRealtimeListener, presenceJoin, presenceLeave, presenceDisconnect, presenceHeartbeat } from "./lib/realtime.js";
-import { sessionMiddleware, demoWriteProtection, verifySession, resolveOrg, resolveEnvironment, resolveTenantPool } from "./lib/session.js";
+import { sessionMiddleware, verifySession, resolveOrg, resolveEnvironment, resolveTenantPool } from "./lib/session.js";
 import { bootstrapAdmin } from "./lib/bootstrap-admin.js";
 import { csrfMiddleware } from "./lib/csrf.js";
 import { resolveApiKey } from "./lib/api-keys.js";
 import { requestLogger, globalErrorHandler, cleanupOldLogs } from "./lib/observability.js";
 import { metricsMiddleware, metricsHandler } from "./lib/metrics.js";
-import { seedDemoData } from "./lib/demo/index.js";
 import { seedDevTenants } from "./lib/dev-tenants.js";
 import swaggerUi from "swagger-ui-express";
 import { openApiBase } from "./docs/openapi-base.js";
@@ -70,6 +69,22 @@ if (process.env.NODE_ENV === "production") {
 
 // ─── Express setup ───
 const app = express();
+
+// ─── Cloud overlay hook (open-core composition) ───
+// OSS builds have no ./cloud/ module, so this is a no-op and the app runs as the
+// single-instance core. The hosted (truss-cloud) image overlays ./cloud/index.js,
+// whose registerCloud() pushes platform middleware/routes into the named slots
+// below. Slots are applied at fixed points in the pipeline so ordering is explicit.
+const cloudHooks = { preSession: [], postSession: [], routes: [], wsUpgrade: [] };
+try {
+  const cloud = await import("./cloud/index.js");
+  await cloud.registerCloud({ app, hooks: cloudHooks });
+  logger.info("Cloud overlay loaded");
+} catch (err) {
+  if (err?.code !== "ERR_MODULE_NOT_FOUND") {
+    logger.error({ err: err.message }, "Cloud overlay failed to load");
+  }
+}
 
 // ─── Waitlist CORS (must be before Helmet to handle OPTIONS preflight) ───
 app.use((req, res, next) => {
@@ -234,6 +249,9 @@ app.use((req, res, next) => {
   next();
 });
 
+// ─── Cloud pre-session middleware (e.g. demo-tenant resolver in truss-cloud) ───
+cloudHooks.preSession.forEach((m) => app.use(m));
+
 // ─── Session authentication ───
 app.use(sessionMiddleware);
 
@@ -243,8 +261,8 @@ app.use(resolveOrg);
 // ─── Environment resolution (must be after session + org) ───
 app.use(resolveEnvironment);
 
-// ─── Demo write protection (must be after session middleware) ───
-app.use(demoWriteProtection);
+// ─── Cloud post-session middleware (e.g. demo write protection in truss-cloud) ───
+cloudHooks.postSession.forEach((m) => app.use(m));
 
 // Single-instance core: no multi-tenant pool routing, trial, or freeze middleware
 // (those live in truss-cloud). getCustomerPool() serves the single configured DB.
@@ -549,13 +567,15 @@ app.use(cacheRoutes);
 app.use(integrationsRoutes);
 app.use(extensionsRoutes);
 
+// ─── Cloud routes (e.g. /demo routes in truss-cloud) — must be before the error handler ───
+cloudHooks.routes.forEach((r) => app.use(r));
+
 // ─── Global error handler (must be after all routes) ───
 app.use(globalErrorHandler);
 
 // ─── HTTP + WebSocket server ───
 const httpServer = createServer(app);
 const AUTH_REQUIRED_WS = process.env.TRUSS_AUTH_REQUIRED !== "false";
-const DEMO_MODE_WS = process.env.TRUSS_DEMO_MODE === "true";
 const wss = new WebSocketServer({ noServer: true, maxPayload: 65536 });
 
 // ─── WebSocket per-IP connection limiter ───
@@ -633,15 +653,19 @@ httpServer.on("upgrade", async (req, socket, head) => {
       return;
     }
 
-    // Demo mode: allow but mark as demo
-    if (DEMO_MODE_WS) {
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        ws._authMode = "demo";
-        ws.tenantId = "demo";
-        trackWsIp(ws);
-        wss.emit("connection", ws, req);
-      });
-      return;
+    // Cloud overlay WS auth (e.g. demo connections in truss-cloud). Each handler
+    // returns { authMode, tenantId } to accept the upgrade, or null to pass.
+    for (const handler of cloudHooks.wsUpgrade) {
+      const decision = handler(req);
+      if (decision) {
+        wss.handleUpgrade(req, socket, head, (ws) => {
+          ws._authMode = decision.authMode;
+          ws.tenantId = decision.tenantId || null;
+          trackWsIp(ws);
+          wss.emit("connection", ws, req);
+        });
+        return;
+      }
     }
 
     // Reject unauthorized
@@ -690,19 +714,6 @@ ensureInternalSchema().then(async () => {
       await seedDevTenants();
     } catch (err) {
       logger.error({ err: err.message }, "Dev tenant seed warning");
-    }
-  }
-
-  // Seed demo data when TRUSS_DEMO_MODE is enabled
-  if (process.env.TRUSS_DEMO_MODE === "true") {
-    try {
-      const pool = getPool();
-      if (pool) {
-        logger.info("Demo mode: seeding sample data...");
-        await seedDemoData(pool);
-      }
-    } catch (err) {
-      logger.error({ err: err.message }, "Demo seed warning");
     }
   }
 }).catch(err => {
