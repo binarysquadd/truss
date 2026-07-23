@@ -1,12 +1,21 @@
 name: Release
 
 # release-please drives versioning: pushes to main accumulate into a release PR; merging it
-# tags vX.Y.Z, cuts the GitHub Release, and (in the SAME run, gated on releases_created) builds +
-# signs + publishes every artifact. Gating in one workflow avoids the GITHUB_TOKEN tag-trigger
-# recursion block, so no PAT is needed.
+# tags vX.Y.Z, cuts the GitHub Release, and (gated on releases_created) builds + signs + publishes
+# every artifact in the SAME run (no PAT / tag-trigger recursion needed).
+#
+# workflow_dispatch is a manual (re)publish path for an already-tagged version — used to retry a
+# failed/partial publish without deleting and re-cutting the release. Give it the version (e.g.
+# 0.3.0) or leave blank to use the current manifest version.
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to (re)publish, no leading v (e.g. 0.3.0). Blank = current manifest version."
+        required: false
+        default: ""
 
 permissions: {}
 
@@ -17,12 +26,12 @@ env:
 jobs:
   release-please:
     name: Release PR / tag
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
     outputs:
-      # Top-level aggregate boolean set by release-please-action v4 (verified from its outputs).
       releases_created: ${{ steps.rp.outputs.releases_created }}
     steps:
       - uses: googleapis/release-please-action@v4
@@ -34,7 +43,8 @@ jobs:
   images:
     name: Build, sign & publish images
     needs: release-please
-    if: needs.release-please.outputs.releases_created == 'true'
+    # Run when release-please cut a release (push flow) OR on a manual republish dispatch.
+    if: always() && (needs.release-please.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: write   # attach SBOMs to the release
@@ -57,12 +67,18 @@ jobs:
             context: operator
             dockerfile: operator/Dockerfile
     steps:
+      # On a manual republish with an explicit version, check out that tag; otherwise the ref
+      # we're running on (the release commit on push, or main on a blank-version dispatch).
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ (github.event_name == 'workflow_dispatch' && inputs.version != '') && format('v{0}', inputs.version) || github.ref }}
 
-      # The release commit is on this ref; the manifest holds the just-released version.
       - name: Resolve version
         id: ver
-        run: echo "version=$(jq -r '.["."]' .release-please-manifest.json)" >> "$GITHUB_OUTPUT"
+        run: |
+          V="${{ inputs.version }}"
+          [ -z "$V" ] && V="$(jq -r '.["."]' .release-please-manifest.json)"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
       - uses: sigstore/cosign-installer@v3
@@ -86,7 +102,6 @@ jobs:
           sbom: true             # SBOM attestation, pushed alongside the image
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.name }}:${{ steps.ver.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.name }}:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.name }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -113,25 +128,32 @@ jobs:
   chart:
     name: Package, sign & publish Helm chart
     needs: [release-please, images]
-    if: needs.release-please.outputs.releases_created == 'true'
+    if: always() && needs.images.result == 'success' && (needs.release-please.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       packages: write
       id-token: write   # cosign keyless
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ (github.event_name == 'workflow_dispatch' && inputs.version != '') && format('v{0}', inputs.version) || github.ref }}
 
       - name: Resolve version
         id: ver
-        run: echo "version=$(jq -r '.["."]' .release-please-manifest.json)" >> "$GITHUB_OUTPUT"
+        run: |
+          V="${{ inputs.version }}"
+          [ -z "$V" ] && V="$(jq -r '.["."]' .release-please-manifest.json)"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
 
       - uses: azure/setup-helm@v4
       - uses: sigstore/cosign-installer@v3
-
-      - name: Helm registry login
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | \
-            helm registry login "$REGISTRY" --username "${{ github.actor }}" --password-stdin
+      # cosign reads Docker's config for registry auth, so a docker login is required in addition
+      # to `helm registry login` (which only configures the helm CLI) — else signing 401s.
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package, push & sign chart
         env:
@@ -147,16 +169,21 @@ jobs:
   operator-installer:
     name: Publish operator install bundle
     needs: release-please
-    if: needs.release-please.outputs.releases_created == 'true'
+    if: always() && (needs.release-please.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ (github.event_name == 'workflow_dispatch' && inputs.version != '') && format('v{0}', inputs.version) || github.ref }}
 
       - name: Resolve version
         id: ver
-        run: echo "version=$(jq -r '.["."]' .release-please-manifest.json)" >> "$GITHUB_OUTPUT"
+        run: |
+          V="${{ inputs.version }}"
+          [ -z "$V" ] && V="$(jq -r '.["."]' .release-please-manifest.json)"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-go@v5
         with:
