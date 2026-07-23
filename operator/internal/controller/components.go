@@ -128,6 +128,11 @@ func apiEnv(ti *appsv1alpha1.TrussInstance) []corev1.EnvVar {
 	if ti.Spec.PublicURL != "" {
 		env = append(env, corev1.EnvVar{Name: "TRUSS_PUBLIC_URL", Value: ti.Spec.PublicURL})
 	}
+	// Activates the app's OpenTelemetry export (traces + OTLP metric/log push). Without it
+	// the app still serves /metrics and stdout logs; it just pushes nothing.
+	if ti.Spec.Observability.OTLPEndpoint != "" {
+		env = append(env, corev1.EnvVar{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: ti.Spec.Observability.OTLPEndpoint})
+	}
 	if ti.Spec.Dependencies.Postgres.ExistingSecret != "" {
 		env = append(env, corev1.EnvVar{
 			Name: "DATABASE_URL",

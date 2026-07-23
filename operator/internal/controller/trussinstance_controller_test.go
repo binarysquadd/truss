@@ -160,7 +160,8 @@ var _ = Describe("TrussInstance Controller", func() {
 						PDB:            appsv1alpha1.PDBSpec{Enabled: true, MinAvailable: &minAvail},
 						TopologySpread: true,
 					},
-					Ingress: appsv1alpha1.IngressSpec{Enabled: true},
+					Ingress:       appsv1alpha1.IngressSpec{Enabled: true},
+					Observability: appsv1alpha1.ObservabilitySpec{OTLPEndpoint: "http://otel-collector:4318"},
 				},
 			})).To(Succeed())
 
@@ -183,6 +184,15 @@ var _ = Describe("TrussInstance Controller", func() {
 			dep := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resName + "-api", Namespace: ns}, dep)).To(Succeed())
 			Expect(dep.Spec.Template.Spec.TopologySpreadConstraints).To(HaveLen(2))
+
+			By("otlp endpoint is injected into the api container env")
+			var otlp string
+			for _, e := range dep.Spec.Template.Spec.Containers[0].Env {
+				if e.Name == "OTEL_EXPORTER_OTLP_ENDPOINT" {
+					otlp = e.Value
+				}
+			}
+			Expect(otlp).To(Equal("http://otel-collector:4318"))
 		})
 	})
 })

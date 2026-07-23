@@ -62,6 +62,29 @@ type TrussInstanceSpec struct {
 	// ingress configures an Ingress fronting the dashboard and API.
 	// +optional
 	Ingress IngressSpec `json:"ingress,omitempty"`
+
+	// observability wires the deployed instance for metrics/traces/logs.
+	// +optional
+	Observability ObservabilitySpec `json:"observability,omitempty"`
+}
+
+// ObservabilitySpec controls how the operator makes the deployed Truss observable.
+type ObservabilitySpec struct {
+	// otlpEndpoint, when set, points the app's OpenTelemetry export at a collector
+	// (e.g. http://otel-collector:4318), activating traces + OTLP metric/log push.
+	// Empty means the app still exposes /metrics and stdout logs, but pushes nothing.
+	// +optional
+	OTLPEndpoint string `json:"otlpEndpoint,omitempty"`
+
+	// serviceMonitor creates a Prometheus-operator ServiceMonitor scraping the api
+	// /metrics endpoint. Requires the Prometheus operator CRDs in the cluster.
+	// +optional
+	ServiceMonitor bool `json:"serviceMonitor,omitempty"`
+
+	// prometheusRule creates multi-window burn-rate SLO alerts for the api. Requires
+	// the Prometheus operator CRDs.
+	// +optional
+	PrometheusRule bool `json:"prometheusRule,omitempty"`
 }
 
 // Components configures the Truss application tier.

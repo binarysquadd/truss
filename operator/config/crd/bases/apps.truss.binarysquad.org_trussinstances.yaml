@@ -346,6 +346,26 @@ spec:
                       host.
                     type: boolean
                 type: object
+              observability:
+                description: observability wires the deployed instance for metrics/traces/logs.
+                properties:
+                  otlpEndpoint:
+                    description: |-
+                      otlpEndpoint, when set, points the app's OpenTelemetry export at a collector
+                      (e.g. http://otel-collector:4318), activating traces + OTLP metric/log push.
+                      Empty means the app still exposes /metrics and stdout logs, but pushes nothing.
+                    type: string
+                  prometheusRule:
+                    description: |-
+                      prometheusRule creates multi-window burn-rate SLO alerts for the api. Requires
+                      the Prometheus operator CRDs.
+                    type: boolean
+                  serviceMonitor:
+                    description: |-
+                      serviceMonitor creates a Prometheus-operator ServiceMonitor scraping the api
+                      /metrics endpoint. Requires the Prometheus operator CRDs in the cluster.
+                    type: boolean
+                type: object
               publicURL:
                 description: |-
                   publicURL is the browser-facing URL of the dashboard. It drives the
