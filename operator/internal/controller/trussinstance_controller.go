@@ -22,6 +22,8 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -50,7 +52,14 @@ type TrussInstanceReconciler struct {
 // Reconcile moves the cluster toward the desired state described by a TrussInstance.
 // It is level-triggered and idempotent: it re-derives the whole desired state every
 // run, so calling it a thousand times is safe.
-func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
+	defer func() {
+		outcome := "success"
+		if err != nil {
+			outcome = "error"
+		}
+		reconcileTotal.WithLabelValues(outcome).Inc()
+	}()
 	log := logf.FromContext(ctx)
 
 	// Fetch desired state. NotFound means the object is gone; owned objects are
@@ -167,6 +176,8 @@ func (r *TrussInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&appsv1alpha1.TrussInstance{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&networkingv1.Ingress{}).
+		Owns(&policyv1.PodDisruptionBudget{}).
 		Named("trussinstance").
 		Complete(r)
 }
