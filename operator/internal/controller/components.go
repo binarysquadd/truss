@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
@@ -83,6 +84,23 @@ func replicasOf(comp appsv1alpha1.ComponentSpec) int32 {
 		return 1
 	}
 	return comp.Replicas
+}
+
+// hardenedContainerSecurity applies non-breaking container hardening. It does NOT
+// force runAsNonRoot or drop capabilities, since those depend on the app image's
+// user and the dashboard's privileged :80 bind; set those via the podTemplate
+// escape hatch once you run rootless images.
+func hardenedContainerSecurity() *corev1.SecurityContext {
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: ptr.To(false),
+	}
+}
+
+// hardenedPodSecurity applies the RuntimeDefault seccomp profile at the pod level.
+func hardenedPodSecurity() *corev1.PodSecurityContext {
+	return &corev1.PodSecurityContext{
+		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
 }
 
 func tcpProbe(port int32) *corev1.Probe {
@@ -153,13 +171,15 @@ func (r *TrussInstanceReconciler) desiredAPIDeployment(ti *appsv1alpha1.TrussIns
 		ObjectMeta: metav1.ObjectMeta{Labels: labels},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{
-				Name:           "api",
-				Image:          apiImageRepo + ":" + ti.Spec.Version,
-				Ports:          []corev1.ContainerPort{{Name: "http", ContainerPort: apiPort}},
-				Env:            apiEnv(ti),
-				Resources:      resourcesFor(ti.Spec.Components.API, ti.Spec.Scaling.Profile),
-				ReadinessProbe: tcpProbe(apiPort),
+				Name:            "api",
+				Image:           apiImageRepo + ":" + ti.Spec.Version,
+				Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: apiPort}},
+				Env:             apiEnv(ti),
+				Resources:       resourcesFor(ti.Spec.Components.API, ti.Spec.Scaling.Profile),
+				ReadinessProbe:  tcpProbe(apiPort),
+				SecurityContext: hardenedContainerSecurity(),
 			}},
+			SecurityContext: hardenedPodSecurity(),
 		},
 	}
 	if ti.Spec.Resilience.TopologySpread {
@@ -191,12 +211,14 @@ func (r *TrussInstanceReconciler) desiredDashboardDeployment(ti *appsv1alpha1.Tr
 		ObjectMeta: metav1.ObjectMeta{Labels: labels},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{
-				Name:           "dashboard",
-				Image:          dashboardImageRepo + ":" + ti.Spec.Version,
-				Ports:          []corev1.ContainerPort{{Name: "http", ContainerPort: dashboardPort}},
-				Resources:      resourcesFor(ti.Spec.Components.Dashboard, ti.Spec.Scaling.Profile),
-				ReadinessProbe: httpGetProbe("/", dashboardPort),
+				Name:            "dashboard",
+				Image:           dashboardImageRepo + ":" + ti.Spec.Version,
+				Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: dashboardPort}},
+				Resources:       resourcesFor(ti.Spec.Components.Dashboard, ti.Spec.Scaling.Profile),
+				ReadinessProbe:  httpGetProbe("/", dashboardPort),
+				SecurityContext: hardenedContainerSecurity(),
 			}},
+			SecurityContext: hardenedPodSecurity(),
 		},
 	}
 	if ti.Spec.Resilience.TopologySpread {
