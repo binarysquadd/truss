@@ -13,10 +13,18 @@
  *
  * All behavior follows standard OTEL_* env vars (service name, sampling, headers).
  */
+import { register } from "node:module";
 import { metrics } from "@opentelemetry/api";
 import { MeterProvider, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { PrometheusExporter } from "@opentelemetry/exporter-prometheus";
 import { resourceFromAttributes } from "@opentelemetry/resources";
+
+// ESM auto-instrumentation: register the import-in-the-middle loader hook so OTEL can patch
+// ES-module imports (e.g. `import pino from "pino"`). This module is loaded via `node --import`
+// before the app, so the hook is active before the app imports pino. Without it, only CJS deps
+// reached through `require` get patched (http/express/pg still trace), but pino's log→OTLP
+// bridge silently no-ops and logs never leave the process.
+register("@opentelemetry/instrumentation/hook.mjs", import.meta.url);
 
 const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 const consoleMode = process.env.OTEL_TRACES_EXPORTER === "console";
