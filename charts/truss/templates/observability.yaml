@@ -16,8 +16,12 @@ spec:
 {{- end }}
 {{- if .Values.observability.prometheusRule.enabled }}
 ---
-# PrometheusRule — the three SLO alerts (error rate, p95 latency, DB-pool saturation),
-# all derived from the metrics the API exposes. Requires the operator CRDs.
+# PrometheusRule — multi-window, multi-burn-rate SLO alerting (Google SRE method) for a
+# 99.5%/30d availability objective (0.5% error budget), plus supplementary latency + DB-pool
+# alerts. Requires the Prometheus operator CRDs.
+#
+# NOTE: no {service="truss-api"} selector — under the OTEL SDK the service name lives in
+# target_info / otel_scope_name, not a per-series label, and the truss_ metric names are unique.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -27,23 +31,43 @@ spec:
   groups:
     - name: truss-api.slo
       rules:
-        - alert: TrussApiHighErrorRate
+        # Fast burn: 14.4x budget consumption over 1h AND 5m windows → page.
+        - alert: TrussApiErrorBudgetBurnFast
           expr: |
-            sum(rate(truss_http_request_duration_seconds_count{service="truss-api",status_code=~"5.."}[5m]))
-              / sum(rate(truss_http_request_duration_seconds_count{service="truss-api"}[5m])) > 0.01
-          for: 5m
+            (
+              sum(rate(truss_http_request_duration_seconds_count{status_code=~"5.."}[1h]))
+                / sum(rate(truss_http_request_duration_seconds_count[1h])) > (14.4 * 0.005)
+            ) and (
+              sum(rate(truss_http_request_duration_seconds_count{status_code=~"5.."}[5m]))
+                / sum(rate(truss_http_request_duration_seconds_count[5m])) > (14.4 * 0.005)
+            )
+          for: 2m
+          labels: { severity: critical }
+          annotations:
+            summary: "Truss API burning error budget fast (14.4x over 1h and 5m)"
+        # Slow burn: 6x consumption over 6h AND 30m windows → warn.
+        - alert: TrussApiErrorBudgetBurnSlow
+          expr: |
+            (
+              sum(rate(truss_http_request_duration_seconds_count{status_code=~"5.."}[6h]))
+                / sum(rate(truss_http_request_duration_seconds_count[6h])) > (6 * 0.005)
+            ) and (
+              sum(rate(truss_http_request_duration_seconds_count{status_code=~"5.."}[30m]))
+                / sum(rate(truss_http_request_duration_seconds_count[30m])) > (6 * 0.005)
+            )
+          for: 15m
           labels: { severity: warning }
           annotations:
-            summary: "Truss API 5xx error rate above 1% (5m)"
+            summary: "Truss API burning error budget slowly (6x over 6h and 30m)"
         - alert: TrussApiHighLatencyP95
           expr: |
-            histogram_quantile(0.95, sum by (le) (rate(truss_http_request_duration_seconds_bucket{service="truss-api"}[5m]))) > 0.5
+            histogram_quantile(0.95, sum by (le) (rate(truss_http_request_duration_seconds_bucket[5m]))) > 0.5
           for: 10m
           labels: { severity: warning }
           annotations:
             summary: "Truss API p95 latency above 500ms (10m)"
         - alert: TrussApiDbPoolSaturated
-          expr: truss_db_pool_connections{service="truss-api",state="waiting"} > 0
+          expr: truss_db_pool_connections{state="waiting"} > 0
           for: 5m
           labels: { severity: warning }
           annotations:
