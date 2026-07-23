@@ -120,6 +120,10 @@ jobs:
           output-file: sbom-${{ matrix.name }}.spdx.json
 
       - name: Attach SBOM to the release
+        # Best-effort: the SBOM is also pushed as an OCI attestation (sbom: true above), so a
+        # failed release-asset upload (e.g. on a workflow_dispatch republish) must not fail the
+        # publish/sign path, which is what gates the chart job.
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
@@ -194,6 +198,7 @@ jobs:
         run: make build-installer IMG="${REGISTRY}/${IMAGE_NAMESPACE}/truss-operator:${{ steps.ver.outputs.version }}"
 
       - name: Attach install.yaml to the release
+        continue-on-error: true # best-effort asset upload; must not fail the publish path
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
