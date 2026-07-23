@@ -18,7 +18,7 @@
   "packages": {
     ".": {
       "component": "truss",
-      "extra-files": ["charts/truss/Chart.yaml"]
+      "extra-files": [{ "type": "generic", "path": "charts/truss/Chart.yaml" }]
     }
   }
 }

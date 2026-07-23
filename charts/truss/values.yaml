@@ -39,15 +39,18 @@ images:
 # Only `encryptionKey` has a runtime guard; the others will silently deploy with
 # these well-known values if not overridden. See README "Hardening".
 # ─────────────────────────────────────────────────────────────────────────────
+# Secrets. Leave BLANK to auto-generate a strong random value on first install (persisted in the
+# `truss-secrets` Secret and reused across upgrades — see templates/_helpers.tpl). Set any of them
+# explicitly to bring your own (e.g. from an external secret manager / sealed-secrets).
 secrets:
-  dbPassword: "truss"
-  encryptionKey: "change-me-encryption-key-32chars-minimum-000000"   # openssl rand -hex 32
-  minioAccessKey: "truss-minio"
-  minioSecretKey: "change-me-minio-secret-key"
-  kratosCookieSecret: "change-me-cookie-secret-32chars!"
-  kratosCipherSecret: "change-me-cipher-secret-32chars!"
-  hydraSystemSecret: "change-me-hydra-system-secret-32chars-min"   # openssl rand -hex 16
-  valkeyPassword: "change-me-valkey-password"   # openssl rand -hex 16
+  dbPassword: ""
+  encryptionKey: ""
+  minioAccessKey: ""
+  minioSecretKey: ""
+  kratosCookieSecret: ""
+  kratosCipherSecret: ""
+  hydraSystemSecret: ""
+  valkeyPassword: ""
 
 postgres:
   storage: 5Gi

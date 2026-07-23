@@ -10,8 +10,8 @@ description: >
   flagd (feature flags), the API, and the dashboard. Plain images, no operators
   required.
 type: application
-version: 0.3.0
-appVersion: 0.2.0
+version: 0.3.0 # x-release-please-version
+appVersion: "0.3.0" # x-release-please-version
 keywords:
   - baas
   - postgres
