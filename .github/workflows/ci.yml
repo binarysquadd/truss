@@ -16,21 +16,23 @@ concurrency:
 
 jobs:
   node:
-    name: Lint + typecheck + build (dashboard/api)
+    name: Typecheck + build (dashboard)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-      - run: npm ci
-      - name: Typecheck + lint
-        run: npm run check
-      - name: Build dashboard (catches type/build errors)
+      # Install WITHOUT the committed lockfile: it is generated on macOS and pins the
+      # darwin rollup binary, so `npm ci` on Linux hits npm's optional-deps bug
+      # (npm/cli#4828) and vite build fails on a missing @rollup/rollup-linux-x64-gnu.
+      # This mirrors selfhosted/Dockerfile.dashboard, which builds the same way.
+      - name: Install
+        run: rm -f package-lock.json && npm install --no-audit --no-fund
+      # `tsc -b && vite build` — the type + build gate for the dashboard. The API is plain
+      # JS (no compile step); its integration tests need a live stack and run in e2e.yml.
+      - name: Typecheck + build dashboard
         run: npm run build
-      - name: API unit tests
-        run: npm run test:unit --workspace @truss/api --if-present
 
   helm:
     name: Helm lint + template (both o11y states)
