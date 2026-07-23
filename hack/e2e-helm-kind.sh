@@ -30,17 +30,43 @@ for img in truss-api truss-dashboard truss-mcp; do
   kind load docker-image "ghcr.io/binarysquadd/$img:latest" --name "$CLUSTER"
 done
 
+say "pre-load all non-truss images into the cluster (so kind never re-pulls — fast + no rate limits)"
+# kind re-pulls in-cluster on every run, which is slow and hits Docker Hub anonymous rate limits.
+# `kind load docker-image` fails on these public images because the host keeps them as multi-arch
+# indexes (ctr import --all-platforms → "content digest not found"). `docker save --platform`
+# (Docker 25+) exports a CONCRETE single-platform archive that `kind load image-archive` imports
+# cleanly. Match the host arch so the pull/save is local-only.
+case "$(uname -m)" in arm64|aarch64) PLATFORM=linux/arm64 ;; *) PLATFORM=linux/amd64 ;; esac
+PRELOAD=(
+  otel/opentelemetry-collector-contrib:0.117.0 prom/prometheus:v3.1.0
+  grafana/loki:3.3.2 grafana/tempo:2.7.0 grafana/grafana:11.5.1
+  postgres:16-alpine oryd/kratos:v1.2.0 oryd/keto:v0.12.0-alpha.0 oryd/hydra:v2.2.0
+  oryd/oathkeeper:v0.40.7 minio/minio:RELEASE.2024-09-22T00-33-43Z
+  ghcr.io/open-feature/flagd:v0.11.1 valkey/valkey:8-alpine
+)
+arch_tar="$(mktemp -d)/img.tar"
+for img in "${PRELOAD[@]}"; do
+  docker pull -q --platform "$PLATFORM" "$img" >/dev/null
+  docker save --platform "$PLATFORM" "$img" -o "$arch_tar"
+  kind load image-archive "$arch_tar" --name "$CLUSTER"
+done
+rm -f "$arch_tar"
+
 say "helm install (backends ON, local image tags)"
 kubectl create namespace "$NS" >/dev/null
 helm install truss charts/truss -n "$NS" \
   --set images.api.tag=latest --set images.dashboard.tag=latest --set images.mcp.tag=latest \
   --set observability.backends.enabled=true \
-  --set publicUrl=http://localhost
+  --set publicUrl=http://localhost \
+  --set secrets.encryptionKey=e2e-encryption-key-0123456789-abcdefghij   # non-placeholder; the API refuses a "change-me" key in prod
 
-say "wait for the observability backends to become Available"
-for d in otel-collector prometheus loki tempo grafana; do
-  kubectl -n "$NS" rollout status deploy/"$d" --timeout=180s
+say "wait for the observability backends to become Available (first run pulls ~5 images)"
+# Signal assertions hit Prometheus/Tempo/Loki directly, so those + the collector must be ready;
+# Grafana is convenience only, so its readiness is non-fatal.
+for d in otel-collector prometheus loki tempo; do
+  kubectl -n "$NS" rollout status deploy/"$d" --timeout=360s
 done
+kubectl -n "$NS" rollout status deploy/grafana --timeout=180s || echo "WARN: grafana not ready (non-fatal; not needed for signal assertions)"
 
 say "wait for the truss API to become Available (deps + migrations first)"
 if ! kubectl -n "$NS" rollout status deploy/truss-api --timeout=420s; then
