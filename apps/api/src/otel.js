@@ -37,6 +37,13 @@ const meterProvider = new MeterProvider({ resource, readers: metricReaders });
 metrics.setGlobalMeterProvider(meterProvider);
 // Shared with lib/metrics.js's /metrics handler (otel.js loads before the app bundle).
 globalThis.__trussPrometheusExporter = prometheusExporter;
+
+// Node runtime metrics (event-loop delay/utilization, GC, heap) — always on, via the
+// global MeterProvider. Replaces prom-client's collectDefaultMetrics.
+const { registerInstrumentations } = await import("@opentelemetry/instrumentation");
+const { RuntimeNodeInstrumentation } = await import("@opentelemetry/instrumentation-runtime-node");
+registerInstrumentations({ instrumentations: [new RuntimeNodeInstrumentation({ monitoringPrecision: 5000 })] });
+
 process.on("SIGTERM", () => { meterProvider.shutdown().catch(() => {}); });
 
 // ── Traces (+ OTLP metric push already wired above): opt-in ────────────────

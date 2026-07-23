@@ -27,7 +27,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (route) (rate(truss_http_request_duration_seconds_count{service=\"truss-api\"}[5m]))",
+          "expr": "sum by (route) (rate(truss_http_request_duration_seconds_count[5m]))",
           "legendFormat": "{{route}}"
         }
       ]
@@ -40,7 +40,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(truss_http_request_duration_seconds_bucket{service=\"truss-api\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(truss_http_request_duration_seconds_bucket[5m])))",
           "legendFormat": "{{route}}"
         }
       ]
@@ -54,7 +54,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "100 * sum(rate(truss_http_request_duration_seconds_count{service=\"truss-api\",status_code=~\"5..\"}[5m])) / clamp_min(sum(rate(truss_http_request_duration_seconds_count{service=\"truss-api\"}[5m])), 1)"
+          "expr": "100 * sum(rate(truss_http_request_duration_seconds_count{status_code=~\"5..\"}[5m])) / clamp_min(sum(rate(truss_http_request_duration_seconds_count[5m])), 1)"
         }
       ]
     },
@@ -66,7 +66,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (route) (rate(truss_http_request_duration_seconds_count{service=\"truss-api\",status_code=~\"5..\"}[5m]))",
+          "expr": "sum by (route) (rate(truss_http_request_duration_seconds_count{status_code=~\"5..\"}[5m]))",
           "legendFormat": "{{route}}"
         }
       ]
@@ -79,26 +79,26 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "truss_db_pool_connections{service=\"truss-api\"}",
+          "expr": "truss_db_pool_connections",
           "legendFormat": "{{state}}"
         }
       ]
     },
     {
-      "title": "Event-loop lag p99 (s)",
+      "title": "Event-loop utilization",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
       "targets": [
         {
           "refId": "A",
-          "expr": "nodejs_eventloop_lag_p99_seconds{service=\"truss-api\"}",
-          "legendFormat": "p99 lag"
+          "expr": "nodejs_eventloop_utilization",
+          "legendFormat": "utilization"
         }
       ]
     },
     {
-      "title": "Resident memory (bytes)",
+      "title": "V8 heap used (bytes)",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
@@ -106,8 +106,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "process_resident_memory_bytes{service=\"truss-api\"}",
-          "legendFormat": "rss"
+          "expr": "v8js_memory_heap_used",
+          "legendFormat": "heap used"
         }
       ]
     }
