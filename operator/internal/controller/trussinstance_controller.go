@@ -125,16 +125,37 @@ func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 
-	// Status. Task 6 computes real per-component readiness; for now mark Ready once
-	// the app-tier objects are applied without error.
+	// Status: read live per-component readiness and derive the phase honestly.
+	apiCS, err := r.componentReadiness(ctx, &ti, "api", replicasOf(ti.Spec.Components.API))
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	dashCS, err := r.componentReadiness(ctx, &ti, "dashboard", replicasOf(ti.Spec.Components.Dashboard))
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	ti.Status.ComponentStatus = appsv1alpha1.ComponentStatuses{API: apiCS, Dashboard: dashCS}
 	ti.Status.ObservedGeneration = ti.Generation
-	ti.Status.Phase = phaseReady
-	setCondition(&ti, condReady, metav1.ConditionTrue, "Reconciled", "app tier reconciled")
+
+	fullyReady := apiCS.Ready >= apiCS.Desired && dashCS.Ready >= dashCS.Desired
+	if fullyReady {
+		ti.Status.Phase = phaseReady
+		setCondition(&ti, condReady, metav1.ConditionTrue, "AllComponentsReady", "all components have their desired replicas ready")
+		setCondition(&ti, condProgressing, metav1.ConditionFalse, "Reconciled", "steady state")
+	} else {
+		ti.Status.Phase = phaseProvisioning
+		setCondition(&ti, condReady, metav1.ConditionFalse, "ComponentsNotReady", "waiting for components to become ready")
+		setCondition(&ti, condProgressing, metav1.ConditionTrue, "Provisioning", "components are starting")
+	}
 	if err := r.Status().Update(ctx, &ti); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	log.Info("reconciled TrussInstance", "name", ti.Name)
+	log.Info("reconciled TrussInstance", "name", ti.Name, "phase", ti.Status.Phase)
+	if !fullyReady {
+		// Re-check readiness until pods come up; watches also re-trigger us.
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
 	return ctrl.Result{}, nil
 }
 

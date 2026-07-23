@@ -95,8 +95,24 @@ var _ = Describe("TrussInstance Controller", func() {
 			Expect(k8sClient.Get(ctx, apiKey, &corev1.Service{})).To(Succeed())
 			Expect(k8sClient.Get(ctx, dashKey, &corev1.Service{})).To(Succeed())
 			Expect(k8sClient.Get(ctx, key, ti)).To(Succeed())
-			Expect(ti.Status.Phase).To(Equal(phaseReady))
+			Expect(ti.Status.Phase).To(Equal(phaseProvisioning))
 			Expect(ti.Status.ObservedGeneration).To(Equal(ti.Generation))
+
+			By("pods reporting ready flips the phase to Ready")
+			markReady := func(k types.NamespacedName) {
+				d := &appsv1.Deployment{}
+				Expect(k8sClient.Get(ctx, k, d)).To(Succeed())
+				d.Status.ReadyReplicas = 1
+				d.Status.Replicas = 1
+				Expect(k8sClient.Status().Update(ctx, d)).To(Succeed())
+			}
+			markReady(apiKey)
+			markReady(dashKey)
+			reconcileOnce()
+			Expect(k8sClient.Get(ctx, key, ti)).To(Succeed())
+			Expect(ti.Status.Phase).To(Equal(phaseReady))
+			Expect(ti.Status.ComponentStatus.API.Ready).To(Equal(int32(1)))
+			Expect(meta.IsStatusConditionTrue(ti.Status.Conditions, condReady)).To(BeTrue())
 
 			By("reconcile is idempotent (SSA re-apply is a no-op)")
 			reconcileOnce()

@@ -17,10 +17,12 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"encoding/json"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -233,6 +235,20 @@ func (r *TrussInstanceReconciler) desiredService(ti *appsv1alpha1.TrussInstance,
 		return nil, err
 	}
 	return svc, nil
+}
+
+// componentReadiness reads the live ready-replica count for a component's
+// Deployment and reports it against the desired count.
+func (r *TrussInstanceReconciler) componentReadiness(ctx context.Context, ti *appsv1alpha1.TrussInstance, comp string, desired int32) (appsv1alpha1.ComponentStatus, error) {
+	dep := &appsv1.Deployment{}
+	err := r.Get(ctx, client.ObjectKey{Namespace: ti.Namespace, Name: ti.Name + "-" + comp}, dep)
+	if apierrors.IsNotFound(err) {
+		return appsv1alpha1.ComponentStatus{Ready: 0, Desired: desired}, nil
+	}
+	if err != nil {
+		return appsv1alpha1.ComponentStatus{}, err
+	}
+	return appsv1alpha1.ComponentStatus{Ready: dep.Status.ReadyReplicas, Desired: desired}, nil
 }
 
 // desiredAppTier returns every app-tier object the operator owns, in apply order.
