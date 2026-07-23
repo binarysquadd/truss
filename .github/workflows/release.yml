@@ -1,13 +1,12 @@
 name: Release
 
 # release-please drives versioning: pushes to main accumulate into a release PR; merging it
-# tags vX.Y.Z, cuts the GitHub Release, and (in the SAME run, gated on release_created) builds +
+# tags vX.Y.Z, cuts the GitHub Release, and (in the SAME run, gated on releases_created) builds +
 # signs + publishes every artifact. Gating in one workflow avoids the GITHUB_TOKEN tag-trigger
 # recursion block, so no PAT is needed.
 on:
   push:
     branches: [main]
-  workflow_dispatch:
 
 permissions: {}
 
@@ -23,23 +22,19 @@ jobs:
       contents: write
       pull-requests: write
     outputs:
-      # Manifest mode prefixes outputs by package path ("." = repo root).
-      release_created: ${{ steps.rp.outputs['.--release_created'] }}
-      tag_name: ${{ steps.rp.outputs['.--tag_name'] }}
+      # Top-level aggregate boolean set by release-please-action v4 (verified from its outputs).
+      releases_created: ${{ steps.rp.outputs.releases_created }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: rp
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-      - name: Debug release-please outputs
-        run: |
-          echo "ALL OUTPUTS: ${{ toJSON(steps.rp.outputs) }}"
 
   images:
     name: Build, sign & publish images
     needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    if: needs.release-please.outputs.releases_created == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write   # attach SBOMs to the release
@@ -64,11 +59,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Derive version (strip leading v)
+      # The release commit is on this ref; the manifest holds the just-released version.
+      - name: Resolve version
         id: ver
-        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-        env:
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: echo "version=$(jq -r '.["."]' .release-please-manifest.json)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
       - uses: sigstore/cosign-installer@v3
@@ -113,13 +107,13 @@ jobs:
       - name: Attach SBOM to the release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          tag_name: v${{ steps.ver.outputs.version }}
           files: sbom-${{ matrix.name }}.spdx.json
 
   chart:
     name: Package, sign & publish Helm chart
     needs: [release-please, images]
-    if: needs.release-please.outputs.release_created == 'true'
+    if: needs.release-please.outputs.releases_created == 'true'
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -127,11 +121,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Derive version (strip leading v)
+      - name: Resolve version
         id: ver
-        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-        env:
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: echo "version=$(jq -r '.["."]' .release-please-manifest.json)" >> "$GITHUB_OUTPUT"
 
       - uses: azure/setup-helm@v4
       - uses: sigstore/cosign-installer@v3
@@ -155,18 +147,16 @@ jobs:
   operator-installer:
     name: Publish operator install bundle
     needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    if: needs.release-please.outputs.releases_created == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Derive version (strip leading v)
+      - name: Resolve version
         id: ver
-        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-        env:
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: echo "version=$(jq -r '.["."]' .release-please-manifest.json)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-go@v5
         with:
@@ -179,5 +169,5 @@ jobs:
       - name: Attach install.yaml to the release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          tag_name: v${{ steps.ver.outputs.version }}
           files: operator/dist/install.yaml
