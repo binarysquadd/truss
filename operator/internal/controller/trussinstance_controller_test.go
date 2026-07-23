@@ -86,10 +86,27 @@ var _ = Describe("TrussInstance Controller", func() {
 				Data:       map[string][]byte{"database-url": []byte("postgres://user:pass@host:5432/truss")},
 			})).To(Succeed())
 			reconcileOnce()
+			dashKey := types.NamespacedName{Name: resourceName + "-dashboard", Namespace: resourceNamespace}
 			Expect(k8sClient.Get(ctx, apiKey, &appsv1.Deployment{})).To(Succeed())
+			Expect(k8sClient.Get(ctx, dashKey, &appsv1.Deployment{})).To(Succeed())
+			Expect(k8sClient.Get(ctx, apiKey, &corev1.Service{})).To(Succeed())
+			Expect(k8sClient.Get(ctx, dashKey, &corev1.Service{})).To(Succeed())
 			Expect(k8sClient.Get(ctx, key, ti)).To(Succeed())
 			Expect(ti.Status.Phase).To(Equal(phaseReady))
 			Expect(ti.Status.ObservedGeneration).To(Equal(ti.Generation))
+
+			By("reconcile is idempotent (SSA re-apply is a no-op)")
+			reconcileOnce()
+
+			By("SSA heals drift on owned fields")
+			apiDep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, apiKey, apiDep)).To(Succeed())
+			five := int32(5)
+			apiDep.Spec.Replicas = &five
+			Expect(k8sClient.Update(ctx, apiDep)).To(Succeed())
+			reconcileOnce()
+			Expect(k8sClient.Get(ctx, apiKey, apiDep)).To(Succeed())
+			Expect(*apiDep.Spec.Replicas).To(Equal(int32(1)))
 
 			By("delete + reconcile removes the finalizer and the object")
 			Expect(k8sClient.Delete(ctx, ti)).To(Succeed())

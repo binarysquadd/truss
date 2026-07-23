@@ -24,7 +24,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -44,6 +43,7 @@ type TrussInstanceReconciler struct {
 // +kubebuilder:rbac:groups=apps.truss.binarysquad.org,resources=trussinstances/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 
 // Reconcile moves the cluster toward the desired state described by a TrussInstance.
 // It is level-triggered and idempotent: it re-derives the whole desired state every
@@ -99,13 +99,16 @@ func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	setCondition(&ti, condDependenciesReady, metav1.ConditionTrue, dep.reason, dep.msg)
 
-	// App tier (CreateOrUpdate for now; Task 4 swaps to Server-Side Apply and adds
-	// the dashboard).
-	if err := r.reconcileAPIDeployment(ctx, &ti); err != nil {
+	// App tier via Server-Side Apply: build the desired api + dashboard objects and
+	// apply each. SSA is idempotent and heals drift on the fields the operator owns.
+	objs, err := r.desiredAppTier(&ti)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := r.reconcileAPIService(ctx, &ti); err != nil {
-		return ctrl.Result{}, err
+	for _, o := range objs {
+		if err := r.applySSA(ctx, o); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Status. Task 6 computes real per-component readiness; for now mark Ready once
@@ -117,80 +120,8 @@ func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	log.Info("reconciled TrussInstance", "name", ti.Name, "apiReplicas", ti.Spec.Components.API.Replicas)
+	log.Info("reconciled TrussInstance", "name", ti.Name)
 	return ctrl.Result{}, nil
-}
-
-// apiLabels are the labels applied to (and selected by) the api workload.
-func apiLabels(ti *appsv1alpha1.TrussInstance) map[string]string {
-	return map[string]string{
-		"app.kubernetes.io/name":       "truss-api",
-		"app.kubernetes.io/instance":   ti.Name,
-		"app.kubernetes.io/managed-by": "truss-operator",
-	}
-}
-
-// apiEnv builds the environment for the api container from the spec.
-func apiEnv(ti *appsv1alpha1.TrussInstance) []corev1.EnvVar {
-	env := []corev1.EnvVar{
-		{Name: "NODE_ENV", Value: "production"},
-		{Name: "API_PORT", Value: "8787"},
-	}
-	if ti.Spec.PublicURL != "" {
-		env = append(env, corev1.EnvVar{Name: "TRUSS_PUBLIC_URL", Value: ti.Spec.PublicURL})
-	}
-	if ti.Spec.Dependencies.Postgres.ExistingSecret != "" {
-		env = append(env, corev1.EnvVar{
-			Name: "DATABASE_URL",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: ti.Spec.Dependencies.Postgres.ExistingSecret},
-					Key:                  "database-url",
-				},
-			},
-		})
-	}
-	return env
-}
-
-func (r *TrussInstanceReconciler) reconcileAPIDeployment(ctx context.Context, ti *appsv1alpha1.TrussInstance) error {
-	labels := apiLabels(ti)
-	replicas := ti.Spec.Components.API.Replicas
-
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: ti.Name + "-api", Namespace: ti.Namespace}}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, dep, func() error {
-		dep.Labels = labels
-		dep.Spec.Replicas = &replicas
-		dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
-		dep.Spec.Template.Labels = labels
-		dep.Spec.Template.Spec.Containers = []corev1.Container{{
-			Name:  "api",
-			Image: "ghcr.io/binarysquadd/truss-api:" + ti.Spec.Version,
-			Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8787}},
-			Env:   apiEnv(ti),
-		}}
-		// Owner reference: ties this Deployment's lifecycle to the TrussInstance.
-		// Delete the TrussInstance and Kubernetes garbage-collects this Deployment.
-		return controllerutil.SetControllerReference(ti, dep, r.Scheme)
-	})
-	return err
-}
-
-func (r *TrussInstanceReconciler) reconcileAPIService(ctx context.Context, ti *appsv1alpha1.TrussInstance) error {
-	labels := apiLabels(ti)
-
-	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: ti.Name + "-api", Namespace: ti.Namespace}}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, svc, func() error {
-		svc.Labels = labels
-		svc.Spec.Selector = labels
-		svc.Spec.Ports = []corev1.ServicePort{{
-			Name:       "http",
-			Port:       8787,
-			TargetPort: intstr.FromInt32(8787),
-		}}
-		return controllerutil.SetControllerReference(ti, svc, r.Scheme)
-	})
-	return err
 }
 
 // SetupWithManager sets up the controller with the Manager.
