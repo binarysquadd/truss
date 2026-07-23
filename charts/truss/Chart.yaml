@@ -1,12 +1,23 @@
 apiVersion: v2
 name: truss
-description: |
-  Truss — self-hostable Backend-as-a-Service. One `helm install` brings up the whole
-  single-tenant stack: Postgres, Ory Kratos (auth), Ory Keto (authz), MinIO (storage),
-  flagd (feature flags), the API, and the dashboard. Plain images, no operators required.
+description: >
+  Truss — self-hostable Backend-as-a-Service. One `helm install` brings up the
+  whole
+
+  single-tenant stack: Postgres, Ory Kratos (auth), Ory Keto (authz), MinIO
+  (storage),
+
+  flagd (feature flags), the API, and the dashboard. Plain images, no operators
+  required.
 type: application
-version: 0.2.0 # x-release-please-version
-appVersion: "0.2.0" # x-release-please-version
-keywords: [baas, postgres, auth, storage, self-hosted]
+version: 0.3.0
+appVersion: 0.2.0
+keywords:
+  - baas
+  - postgres
+  - auth
+  - storage
+  - self-hosted
 home: https://github.com/binarysquadd/truss
-sources: [https://github.com/binarysquadd/truss]
+sources:
+  - https://github.com/binarysquadd/truss
