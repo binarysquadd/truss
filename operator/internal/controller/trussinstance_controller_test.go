@@ -23,10 +23,13 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -112,6 +115,58 @@ var _ = Describe("TrussInstance Controller", func() {
 			Expect(k8sClient.Delete(ctx, ti)).To(Succeed())
 			reconcileOnce()
 			Expect(errors.IsNotFound(k8sClient.Get(ctx, key, ti))).To(BeTrue())
+		})
+	})
+
+	Context("resilience options", func() {
+		const (
+			resName = "res-resource"
+			ns      = "default"
+		)
+		ctx := context.Background()
+		rkey := types.NamespacedName{Name: resName, Namespace: ns}
+
+		It("applies ingress, PDBs, and topology-spread when enabled", func() {
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "res-db", Namespace: ns},
+				Data:       map[string][]byte{"database-url": []byte("postgres://x")},
+			})).To(Succeed())
+			minAvail := intstr.FromInt32(1)
+			Expect(k8sClient.Create(ctx, &appsv1alpha1.TrussInstance{
+				ObjectMeta: metav1.ObjectMeta{Name: resName, Namespace: ns},
+				Spec: appsv1alpha1.TrussInstanceSpec{
+					Version:   "0.2.0",
+					PublicURL: "https://res.truss.binarysquad.org",
+					Dependencies: appsv1alpha1.Dependencies{
+						Postgres: appsv1alpha1.DepSpec{Mode: "byo", ExistingSecret: "res-db"},
+					},
+					Resilience: appsv1alpha1.Resilience{
+						PDB:            appsv1alpha1.PDBSpec{Enabled: true, MinAvailable: &minAvail},
+						TopologySpread: true,
+					},
+					Ingress: appsv1alpha1.IngressSpec{Enabled: true},
+				},
+			})).To(Succeed())
+
+			r := &TrussInstanceReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			for i := 0; i < 2; i++ { // finalizer, then apply
+				_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: rkey})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			By("ingress exists with the publicURL host")
+			ing := &networkingv1.Ingress{}
+			Expect(k8sClient.Get(ctx, rkey, ing)).To(Succeed())
+			Expect(ing.Spec.Rules[0].Host).To(Equal("res.truss.binarysquad.org"))
+
+			By("PDBs exist for both components")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resName + "-api", Namespace: ns}, &policyv1.PodDisruptionBudget{})).To(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resName + "-dashboard", Namespace: ns}, &policyv1.PodDisruptionBudget{})).To(Succeed())
+
+			By("api deployment carries topology-spread constraints")
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resName + "-api", Namespace: ns}, dep)).To(Succeed())
+			Expect(dep.Spec.Template.Spec.TopologySpreadConstraints).To(HaveLen(2))
 		})
 	})
 })

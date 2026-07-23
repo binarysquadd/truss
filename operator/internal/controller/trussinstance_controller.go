@@ -44,6 +44,8 @@ type TrussInstanceReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile moves the cluster toward the desired state described by a TrussInstance.
 // It is level-triggered and idempotent: it re-derives the whole desired state every
@@ -106,6 +108,18 @@ func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 	for _, o := range objs {
+		if err := r.applySSA(ctx, o); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Resilience: optional ingress + PodDisruptionBudgets, gated on spec toggles.
+	// (Topology-spread is baked into the Deployment pod templates above.)
+	resObjs, err := r.desiredResilience(&ti)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	for _, o := range resObjs {
 		if err := r.applySSA(ctx, o); err != nil {
 			return ctrl.Result{}, err
 		}

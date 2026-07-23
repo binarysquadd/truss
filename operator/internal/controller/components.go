@@ -160,6 +160,9 @@ func (r *TrussInstanceReconciler) desiredAPIDeployment(ti *appsv1alpha1.TrussIns
 			}},
 		},
 	}
+	if ti.Spec.Resilience.TopologySpread {
+		tmpl.Spec.TopologySpreadConstraints = topologyConstraints(labels)
+	}
 	tmpl, err := applyPodTemplateOverride(tmpl, ti.Spec.Components.API.PodTemplate)
 	if err != nil {
 		return nil, err
@@ -193,6 +196,9 @@ func (r *TrussInstanceReconciler) desiredDashboardDeployment(ti *appsv1alpha1.Tr
 				ReadinessProbe: httpGetProbe("/", dashboardPort),
 			}},
 		},
+	}
+	if ti.Spec.Resilience.TopologySpread {
+		tmpl.Spec.TopologySpreadConstraints = topologyConstraints(labels)
 	}
 	tmpl, err := applyPodTemplateOverride(tmpl, ti.Spec.Components.Dashboard.PodTemplate)
 	if err != nil {
