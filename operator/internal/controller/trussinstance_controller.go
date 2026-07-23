@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -80,8 +81,26 @@ func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
+	// Dependency-readiness gating: do not roll the app tier until every configured
+	// dependency resolves. Level-triggered ordering, surfaced as a condition.
+	dep, err := r.resolveDeps(ctx, &ti)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !dep.ready {
+		setCondition(&ti, condDependenciesReady, metav1.ConditionFalse, dep.reason, dep.msg)
+		setCondition(&ti, condProgressing, metav1.ConditionTrue, "WaitingForDependencies", dep.msg)
+		ti.Status.ObservedGeneration = ti.Generation
+		ti.Status.Phase = phasePending
+		if err := r.Status().Update(ctx, &ti); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
+	}
+	setCondition(&ti, condDependenciesReady, metav1.ConditionTrue, dep.reason, dep.msg)
+
 	// App tier (CreateOrUpdate for now; Task 4 swaps to Server-Side Apply and adds
-	// the dashboard; Task 3 inserts dependency-readiness gating before this point).
+	// the dashboard).
 	if err := r.reconcileAPIDeployment(ctx, &ti); err != nil {
 		return ctrl.Result{}, err
 	}
