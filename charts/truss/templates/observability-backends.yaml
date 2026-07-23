@@ -1,0 +1,240 @@
+{{- if .Values.observability.backends.enabled }}
+# ─────────────────────────────────────────────────────────────────────────────
+# Bundled observability backends (OPT-IN, off by default).
+#
+# The same LGTM + OTel Collector pipeline as the compose overlay, so a self-hoster on
+# Kubernetes who does NOT already run monitoring gets a working 4-signal stack by flipping
+# ONE switch (observability.backends.enabled=true). A team that already runs
+# kube-prometheus-stack leaves this off and instead uses observability.serviceMonitor /
+# .prometheusRule / .grafanaDashboard to feed their existing stack, and points
+# observability.otlpEndpoint at their own collector.
+#
+# Storage is emptyDir (ephemeral) — fine for a demo / single box. For durable retention,
+# override with PVCs or (better) an external stack. Service names match the compose stack
+# (prometheus/loki/tempo/otel-collector/grafana) so the shipped configs need no edits.
+# ─────────────────────────────────────────────────────────────────────────────
+{{- $img := .Values.observability.backends.images }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: truss-otel-configs
+  labels: { app: truss-observability }
+data:
+  otel-collector.yaml: |
+{{ .Files.Get "files/observability/otel-collector.yaml" | indent 4 }}
+  prometheus.yml: |
+{{ .Files.Get "files/observability/prometheus.yml" | indent 4 }}
+  loki-config.yaml: |
+{{ .Files.Get "files/observability/loki-config.yaml" | indent 4 }}
+  tempo.yaml: |
+{{ .Files.Get "files/observability/tempo.yaml" | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: truss-grafana-provisioning
+  labels: { app: truss-observability }
+data:
+  datasources.yaml: |
+{{ .Files.Get "files/observability/grafana/datasources/datasources.yaml" | indent 4 }}
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: truss
+        orgId: 1
+        folder: ""
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: truss-grafana-dashboards
+  labels: { app: truss-observability }
+data:
+  truss-api.json: |
+{{ .Files.Get "dashboards/truss-api.json" | indent 4 }}
+---
+# ── OTel Collector — single OTLP ingest, fans out to Tempo / Prometheus / Loki ──
+apiVersion: v1
+kind: Service
+metadata: { name: otel-collector, labels: { app: otel-collector } }
+spec:
+  selector: { app: otel-collector }
+  ports:
+    - { name: otlp-grpc, port: 4317, targetPort: 4317 }
+    - { name: otlp-http, port: 4318, targetPort: 4318 }
+    - { name: telemetry, port: 8888, targetPort: 8888 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: otel-collector, labels: { app: otel-collector } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: otel-collector } }
+  template:
+    metadata:
+      labels: { app: otel-collector }
+      annotations: { checksum/config: {{ .Files.Get "files/observability/otel-collector.yaml" | sha256sum }} }
+    spec:
+      containers:
+        - name: otel-collector
+          image: {{ $img.otelCollector | quote }}
+          args: ["--config=/etc/otelcol/config.yaml"]
+          ports: [{ containerPort: 4317 }, { containerPort: 4318 }, { containerPort: 8888 }]
+          readinessProbe: { tcpSocket: { port: 4318 }, initialDelaySeconds: 5, periodSeconds: 5 }
+          resources: {{- toYaml .Values.resources.small | nindent 12 }}
+          volumeMounts: [{ name: config, mountPath: /etc/otelcol }]
+      volumes:
+        - name: config
+          configMap: { name: truss-otel-configs, items: [{ key: otel-collector.yaml, path: config.yaml }] }
+---
+# ── Prometheus — metrics store (remote-write receiver on; the collector pushes to it) ──
+apiVersion: v1
+kind: Service
+metadata: { name: prometheus, labels: { app: prometheus } }
+spec:
+  selector: { app: prometheus }
+  ports: [{ name: http, port: 9090, targetPort: 9090 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: prometheus, labels: { app: prometheus } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: prometheus } }
+  template:
+    metadata:
+      labels: { app: prometheus }
+      annotations: { checksum/config: {{ .Files.Get "files/observability/prometheus.yml" | sha256sum }} }
+    spec:
+      containers:
+        - name: prometheus
+          image: {{ $img.prometheus | quote }}
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.retention.time=15d"
+            - "--web.enable-remote-write-receiver"
+          ports: [{ containerPort: 9090 }]
+          readinessProbe: { httpGet: { path: /-/ready, port: 9090 }, initialDelaySeconds: 5, periodSeconds: 5 }
+          resources: {{- toYaml .Values.resources.small | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus }
+            - { name: data, mountPath: /prometheus }
+      volumes:
+        - name: config
+          configMap: { name: truss-otel-configs, items: [{ key: prometheus.yml, path: prometheus.yml }] }
+        - { name: data, emptyDir: {} }
+---
+# ── Loki — log store (Loki 3.x native OTLP ingest at /otlp) ──
+apiVersion: v1
+kind: Service
+metadata: { name: loki, labels: { app: loki } }
+spec:
+  selector: { app: loki }
+  ports: [{ name: http, port: 3100, targetPort: 3100 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: loki, labels: { app: loki } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: loki } }
+  template:
+    metadata:
+      labels: { app: loki }
+      annotations: { checksum/config: {{ .Files.Get "files/observability/loki-config.yaml" | sha256sum }} }
+    spec:
+      containers:
+        - name: loki
+          image: {{ $img.loki | quote }}
+          args: ["-config.file=/etc/loki/config.yaml"]
+          ports: [{ containerPort: 3100 }]
+          readinessProbe: { httpGet: { path: /ready, port: 3100 }, initialDelaySeconds: 10, periodSeconds: 5 }
+          resources: {{- toYaml .Values.resources.small | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /etc/loki }
+            - { name: data, mountPath: /loki }
+      volumes:
+        - name: config
+          configMap: { name: truss-otel-configs, items: [{ key: loki-config.yaml, path: config.yaml }] }
+        - { name: data, emptyDir: {} }
+---
+# ── Tempo — trace store (OTLP/gRPC receiver on 4317) ──
+apiVersion: v1
+kind: Service
+metadata: { name: tempo, labels: { app: tempo } }
+spec:
+  selector: { app: tempo }
+  ports:
+    - { name: http, port: 3200, targetPort: 3200 }
+    - { name: otlp-grpc, port: 4317, targetPort: 4317 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: tempo, labels: { app: tempo } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: tempo } }
+  template:
+    metadata:
+      labels: { app: tempo }
+      annotations: { checksum/config: {{ .Files.Get "files/observability/tempo.yaml" | sha256sum }} }
+    spec:
+      containers:
+        - name: tempo
+          image: {{ $img.tempo | quote }}
+          args: ["-config.file=/etc/tempo/config.yaml"]
+          ports: [{ containerPort: 3200 }, { containerPort: 4317 }]
+          readinessProbe: { httpGet: { path: /ready, port: 3200 }, initialDelaySeconds: 10, periodSeconds: 5 }
+          resources: {{- toYaml .Values.resources.small | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /etc/tempo }
+            - { name: data, mountPath: /var/tempo }
+      volumes:
+        - name: config
+          configMap: { name: truss-otel-configs, items: [{ key: tempo.yaml, path: config.yaml }] }
+        - { name: data, emptyDir: {} }
+---
+# ── Grafana — pre-wired datasources (Prometheus/Loki/Tempo) + the Truss API dashboard ──
+apiVersion: v1
+kind: Service
+metadata: { name: grafana, labels: { app: grafana } }
+spec:
+  selector: { app: grafana }
+  ports: [{ name: http, port: 3000, targetPort: 3000 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: grafana, labels: { app: grafana } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: grafana } }
+  template:
+    metadata: { labels: { app: grafana } }
+    spec:
+      containers:
+        - name: grafana
+          image: {{ $img.grafana | quote }}
+          env:
+            - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "true" }
+            - { name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: "Admin" }
+            - { name: GF_AUTH_DISABLE_LOGIN_FORM, value: "true" }
+          ports: [{ containerPort: 3000 }]
+          readinessProbe: { httpGet: { path: /api/health, port: 3000 }, initialDelaySeconds: 10, periodSeconds: 5 }
+          resources: {{- toYaml .Values.resources.small | nindent 12 }}
+          volumeMounts:
+            - { name: datasources, mountPath: /etc/grafana/provisioning/datasources }
+            - { name: dashboards-provider, mountPath: /etc/grafana/provisioning/dashboards }
+            - { name: dashboards, mountPath: /var/lib/grafana/dashboards }
+      volumes:
+        - name: datasources
+          configMap: { name: truss-grafana-provisioning, items: [{ key: datasources.yaml, path: datasources.yaml }] }
+        - name: dashboards-provider
+          configMap: { name: truss-grafana-provisioning, items: [{ key: dashboards.yaml, path: dashboards.yaml }] }
+        - name: dashboards
+          configMap: { name: truss-grafana-dashboards }
+{{- end }}

@@ -45,9 +45,14 @@ spec:
             # Drives the session-cookie Secure flag from the URL scheme (http → off so
             # the cookie survives plain-HTTP/localhost; https → on).
             - { name: TRUSS_PUBLIC_URL, value: {{ .Values.publicUrl | quote }} }
-            {{- if .Values.observability.otlpEndpoint }}
-            # Tracing is opt-in: set observability.otlpEndpoint to export spans (otel.js no-ops otherwise).
-            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ .Values.observability.otlpEndpoint | quote }} }
+            {{- $otlp := .Values.observability.otlpEndpoint }}
+            {{- if and (not $otlp) .Values.observability.backends.enabled }}
+            {{- $otlp = "http://otel-collector:4318" }}
+            {{- end }}
+            {{- if $otlp }}
+            # OTLP export is opt-in: set observability.otlpEndpoint (or enable bundled backends) to
+            # push traces/metrics/logs. otel.js no-ops when unset; /metrics is served either way.
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ $otlp | quote }} }
             {{- end }}
             - name: DATABASE_URL
               valueFrom: { secretKeyRef: { name: truss-secrets, key: database-url } }

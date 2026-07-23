@@ -79,7 +79,9 @@ mcp:
 # Prometheus metrics at /metrics and structured JSON logs to stdout regardless; these toggles
 # only add integration artifacts for clusters already running the Prometheus operator / Grafana.
 observability:
-  # OTLP endpoint for trace export, e.g. http://otel-collector.monitoring:4318. Empty = tracing off.
+  # OTLP endpoint for trace/metric/log export, e.g. http://otel-collector.monitoring:4318.
+  # Empty = the app's OTEL push is off (it still serves /metrics for scraping). When
+  # backends.enabled=true and this is empty, it auto-targets the bundled in-cluster collector.
   otlpEndpoint: ""
   # Create a ServiceMonitor so the Prometheus operator auto-scrapes /metrics (needs its CRDs).
   serviceMonitor:
@@ -91,6 +93,18 @@ observability:
   # Ship the Grafana dashboard as a ConfigMap the Grafana sidecar auto-discovers.
   grafanaDashboard:
     enabled: false
+  # Bundle a full in-cluster LGTM + OTel Collector stack (same pipeline as the compose overlay).
+  # OFF by default. Turn on for a batteries-included 4-signal stack with no external monitoring;
+  # leave off (and use serviceMonitor/prometheusRule/otlpEndpoint) to feed an existing cluster stack.
+  # Storage is ephemeral (emptyDir) — override for durable retention or use an external stack.
+  backends:
+    enabled: false
+    images:
+      otelCollector: otel/opentelemetry-collector-contrib:0.117.0
+      prometheus: prom/prometheus:v3.1.0
+      loki: grafana/loki:3.3.2
+      tempo: grafana/tempo:2.7.0
+      grafana: grafana/grafana:11.5.1
 
 resources:
   small: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 500m, memory: 256Mi } }

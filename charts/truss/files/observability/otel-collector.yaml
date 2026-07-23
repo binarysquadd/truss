@@ -1,0 +1,49 @@
+# OTel Collector — the single ingest for the Truss API's unified OTLP pipeline.
+# The app pushes traces, metrics, and logs over OTLP; the collector fans them out to
+# Tempo / Prometheus / Loki. This is the seam that lets you swap any backend without
+# touching the app.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  # Traces → Tempo (OTLP/gRPC).
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  # Metrics → Prometheus via remote-write (Prometheus runs with --web.enable-remote-write-receiver).
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+    tls:
+      insecure: true
+  # Logs → Loki's native OTLP ingest endpoint (Loki 3.x).
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
+service:
+  telemetry:
+    metrics:
+      address: 0.0.0.0:8888
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheusremotewrite]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/loki]
