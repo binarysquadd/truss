@@ -150,23 +150,48 @@ func apiEnv(ti *appsv1alpha1.TrussInstance) []corev1.EnvVar {
 // applyPodTemplateOverride strategic-merges the user's podTemplate escape-hatch
 // patch over the operator-generated pod template, so an SRE can add sidecars,
 // tolerations, nodeSelectors, or extra volumes without forking the operator.
+// The security floor is re-asserted AFTER the merge (see enforcePodSecurityFloor).
 func applyPodTemplateOverride(base corev1.PodTemplateSpec, override *runtime.RawExtension) (corev1.PodTemplateSpec, error) {
-	if override == nil || len(override.Raw) == 0 {
-		return base, nil
+	out := base
+	if override != nil && len(override.Raw) > 0 {
+		baseJSON, err := json.Marshal(base)
+		if err != nil {
+			return base, err
+		}
+		merged, err := strategicpatch.StrategicMergePatch(baseJSON, override.Raw, corev1.PodTemplateSpec{})
+		if err != nil {
+			return base, err
+		}
+		if err := json.Unmarshal(merged, &out); err != nil {
+			return base, err
+		}
 	}
-	baseJSON, err := json.Marshal(base)
-	if err != nil {
-		return base, err
-	}
-	merged, err := strategicpatch.StrategicMergePatch(baseJSON, override.Raw, corev1.PodTemplateSpec{})
-	if err != nil {
-		return base, err
-	}
-	var out corev1.PodTemplateSpec
-	if err := json.Unmarshal(merged, &out); err != nil {
-		return base, err
-	}
+	enforcePodSecurityFloor(&out)
 	return out, nil
+}
+
+// enforcePodSecurityFloor clamps the escalation-critical fields that no Truss workload
+// legitimately needs, so the podTemplate escape hatch can shape scheduling / sidecars /
+// volumes but can never open a privilege-escalation or node-escape path. It runs AFTER the
+// strategic merge, so it always wins over the override. This matters under delegated
+// multi-tenant RBAC (a tenant holding only `create trussinstances` must not be able to
+// materialize a privileged / host-namespaced pod via the operator's service account); it is
+// a no-op in the single-admin self-hosted default.
+func enforcePodSecurityFloor(tmpl *corev1.PodTemplateSpec) {
+	tmpl.Spec.HostNetwork = false
+	tmpl.Spec.HostPID = false
+	tmpl.Spec.HostIPC = false
+	clamp := func(cs []corev1.Container) {
+		for i := range cs {
+			if cs[i].SecurityContext == nil {
+				cs[i].SecurityContext = &corev1.SecurityContext{}
+			}
+			cs[i].SecurityContext.Privileged = ptr.To(false)
+			cs[i].SecurityContext.AllowPrivilegeEscalation = ptr.To(false)
+		}
+	}
+	clamp(tmpl.Spec.Containers)
+	clamp(tmpl.Spec.InitContainers)
 }
 
 func (r *TrussInstanceReconciler) desiredAPIDeployment(ti *appsv1alpha1.TrussInstance) (*appsv1.Deployment, error) {

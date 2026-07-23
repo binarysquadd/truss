@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -197,6 +198,53 @@ var _ = Describe("TrussInstance Controller", func() {
 				}
 			}
 			Expect(otlp).To(Equal("http://otel-collector:4318"))
+		})
+	})
+
+	Context("podTemplate security floor", func() {
+		const (
+			resName = "sec-resource"
+			ns      = "default"
+		)
+		ctx := context.Background()
+		key := types.NamespacedName{Name: resName, Namespace: ns}
+
+		It("clamps privilege-escalation fields even when the podTemplate override sets them", func() {
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "sec-db", Namespace: ns},
+				Data:       map[string][]byte{"database-url": []byte("postgres://x")},
+			})).To(Succeed())
+
+			// A hostile/careless override trying to open a node-escape path.
+			override := &runtime.RawExtension{Raw: []byte(`{"spec":{"hostNetwork":true,"hostPID":true,"containers":[{"name":"api","securityContext":{"privileged":true,"allowPrivilegeEscalation":true}}]}}`)}
+			Expect(k8sClient.Create(ctx, &appsv1alpha1.TrussInstance{
+				ObjectMeta: metav1.ObjectMeta{Name: resName, Namespace: ns},
+				Spec: appsv1alpha1.TrussInstanceSpec{
+					Version: "0.2.0",
+					Dependencies: appsv1alpha1.Dependencies{
+						Postgres: appsv1alpha1.DepSpec{Mode: "byo", ExistingSecret: "sec-db"},
+					},
+					Components: appsv1alpha1.Components{
+						API: appsv1alpha1.ComponentSpec{PodTemplate: override},
+					},
+				},
+			})).To(Succeed())
+
+			r := &TrussInstanceReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			for i := 0; i < 2; i++ { // finalizer, then apply
+				_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resName + "-api", Namespace: ns}, dep)).To(Succeed())
+			ps := dep.Spec.Template.Spec
+			Expect(ps.HostNetwork).To(BeFalse())
+			Expect(ps.HostPID).To(BeFalse())
+			sc := ps.Containers[0].SecurityContext
+			Expect(sc).NotTo(BeNil())
+			Expect(*sc.Privileged).To(BeFalse())
+			Expect(*sc.AllowPrivilegeEscalation).To(BeFalse())
 		})
 	})
 })
