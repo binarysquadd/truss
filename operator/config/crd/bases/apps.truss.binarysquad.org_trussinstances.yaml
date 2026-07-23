@@ -235,8 +235,8 @@ spec:
                     type: object
                     x-kubernetes-validations:
                     - message: mode 'byo' requires existingSecret
-                      rule: self.mode != 'byo' || (has(self.existingSecret) && size(self.existingSecret)
-                        > 0)
+                      rule: '!has(self.mode) || self.mode != ''byo'' || (has(self.existingSecret)
+                        && size(self.existingSecret) > 0)'
                   flags:
                     description: flags is the flagd/OpenFeature feature-flag backend.
                     properties:
@@ -256,8 +256,8 @@ spec:
                     type: object
                     x-kubernetes-validations:
                     - message: mode 'byo' requires existingSecret
-                      rule: self.mode != 'byo' || (has(self.existingSecret) && size(self.existingSecret)
-                        > 0)
+                      rule: '!has(self.mode) || self.mode != ''byo'' || (has(self.existingSecret)
+                        && size(self.existingSecret) > 0)'
                   ory:
                     description: ory is the identity/authz/oauth2/gateway stack.
                     properties:
@@ -300,8 +300,8 @@ spec:
                     type: object
                     x-kubernetes-validations:
                     - message: mode 'byo' requires existingSecret
-                      rule: self.mode != 'byo' || (has(self.existingSecret) && size(self.existingSecret)
-                        > 0)
+                      rule: '!has(self.mode) || self.mode != ''byo'' || (has(self.existingSecret)
+                        && size(self.existingSecret) > 0)'
                   storage:
                     description: storage is the S3-compatible object store (MinIO).
                     properties:
@@ -321,8 +321,8 @@ spec:
                     type: object
                     x-kubernetes-validations:
                     - message: mode 'byo' requires existingSecret
-                      rule: self.mode != 'byo' || (has(self.existingSecret) && size(self.existingSecret)
-                        > 0)
+                      rule: '!has(self.mode) || self.mode != ''byo'' || (has(self.existingSecret)
+                        && size(self.existingSecret) > 0)'
                 type: object
               ingress:
                 description: ingress configures an Ingress fronting the dashboard
@@ -398,8 +398,8 @@ spec:
             type: object
             x-kubernetes-validations:
             - message: ingress.enabled requires publicURL to be set
-              rule: '!has(self.ingress) || !self.ingress.enabled || (has(self.publicURL)
-                && size(self.publicURL) > 0)'
+              rule: '!has(self.ingress) || !has(self.ingress.enabled) || !self.ingress.enabled
+                || (has(self.publicURL) && size(self.publicURL) > 0)'
           status:
             description: status defines the observed state of TrussInstance
             properties:

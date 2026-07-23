@@ -21,67 +21,68 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	appsv1alpha1 "github.com/binarysquadd/truss/operator/api/v1alpha1"
 )
 
 var _ = Describe("TrussInstance Controller", func() {
-	Context("When reconciling a resource", func() {
+	Context("finalizer + reconcile lifecycle", func() {
 		const (
 			resourceName      = "test-resource"
 			resourceNamespace = "default"
 		)
 
 		ctx := context.Background()
+		key := types.NamespacedName{Name: resourceName, Namespace: resourceNamespace}
+		apiKey := types.NamespacedName{Name: resourceName + "-api", Namespace: resourceNamespace}
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: resourceNamespace,
+		reconciler := func() *TrussInstanceReconciler {
+			return &TrussInstanceReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
 		}
-		trussinstance := &appsv1alpha1.TrussInstance{}
+		reconcileOnce := func() {
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+		}
 
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind TrussInstance")
-			err := k8sClient.Get(ctx, typeNamespacedName, trussinstance)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &appsv1alpha1.TrussInstance{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: resourceNamespace,
+			resource := &appsv1alpha1.TrussInstance{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: resourceNamespace},
+				Spec: appsv1alpha1.TrussInstanceSpec{
+					Version: "0.2.0",
+					Dependencies: appsv1alpha1.Dependencies{
+						Postgres: appsv1alpha1.DepSpec{Mode: "byo", ExistingSecret: "truss-db"},
 					},
-					// TODO(user): Specify other spec details if needed.
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+				},
 			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 		})
 
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &appsv1alpha1.TrussInstance{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
+		It("adds a finalizer, applies the api workload, then finalizes on delete", func() {
+			ti := &appsv1alpha1.TrussInstance{}
 
-			By("Cleanup the specific resource instance TrussInstance")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &TrussInstanceReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
+			By("first reconcile adds the finalizer")
+			reconcileOnce()
+			Expect(k8sClient.Get(ctx, key, ti)).To(Succeed())
+			Expect(controllerutil.ContainsFinalizer(ti, finalizerName)).To(BeTrue())
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+			By("second reconcile creates the api Deployment and marks Ready")
+			reconcileOnce()
+			Expect(k8sClient.Get(ctx, apiKey, &appsv1.Deployment{})).To(Succeed())
+			Expect(k8sClient.Get(ctx, key, ti)).To(Succeed())
+			Expect(ti.Status.Phase).To(Equal(phaseReady))
+			Expect(ti.Status.ObservedGeneration).To(Equal(ti.Generation))
+
+			By("delete + reconcile removes the finalizer and the object")
+			Expect(k8sClient.Delete(ctx, ti)).To(Succeed())
+			reconcileOnce()
+			err := k8sClient.Get(ctx, key, ti)
+			Expect(errors.IsNotFound(err)).To(BeTrue())
 		})
 	})
 })

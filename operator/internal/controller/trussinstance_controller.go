@@ -44,26 +44,57 @@ type TrussInstanceReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 
-// Reconcile moves the cluster toward the desired state described by a TrussInstance:
-// it ensures the truss-api Deployment and Service exist and match the spec.
+// Reconcile moves the cluster toward the desired state described by a TrussInstance.
+// It is level-triggered and idempotent: it re-derives the whole desired state every
+// run, so calling it a thousand times is safe.
 func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	// 1. Fetch the desired state. NotFound means the TrussInstance was deleted;
-	//    its owned objects are garbage-collected automatically via owner refs, so
-	//    there is nothing for us to do.
+	// Fetch desired state. NotFound means the object is gone; owned objects are
+	// garbage-collected via owner refs, so there is nothing to do.
 	var ti appsv1alpha1.TrussInstance
 	if err := r.Get(ctx, req.NamespacedName, &ti); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// 2. Make the truss-api Deployment match the spec (create or update).
+	// Deletion: run finalizer cleanup, then release the object.
+	if !ti.DeletionTimestamp.IsZero() {
+		if controllerutil.ContainsFinalizer(&ti, finalizerName) {
+			// v1 owns only objects with owner refs, which Kubernetes GCs for us;
+			// the finalizer is the seam for ordered teardown of managed deps (v2).
+			log.Info("finalizing TrussInstance", "name", ti.Name)
+			controllerutil.RemoveFinalizer(&ti, finalizerName)
+			if err := r.Update(ctx, &ti); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Ensure the finalizer is present before creating anything. Returning here lets
+	// the resulting update event trigger a fresh reconcile with a current object.
+	if controllerutil.AddFinalizer(&ti, finalizerName) {
+		if err := r.Update(ctx, &ti); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// App tier (CreateOrUpdate for now; Task 4 swaps to Server-Side Apply and adds
+	// the dashboard; Task 3 inserts dependency-readiness gating before this point).
 	if err := r.reconcileAPIDeployment(ctx, &ti); err != nil {
 		return ctrl.Result{}, err
 	}
-
-	// 3. Make the truss-api Service match.
 	if err := r.reconcileAPIService(ctx, &ti); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Status. Task 6 computes real per-component readiness; for now mark Ready once
+	// the app-tier objects are applied without error.
+	ti.Status.ObservedGeneration = ti.Generation
+	ti.Status.Phase = phaseReady
+	setCondition(&ti, condReady, metav1.ConditionTrue, "Reconciled", "app tier reconciled")
+	if err := r.Status().Update(ctx, &ti); err != nil {
 		return ctrl.Result{}, err
 	}
 

@@ -28,7 +28,7 @@ import (
 
 // TrussInstanceSpec defines the desired state of a Truss deployment.
 //
-// +kubebuilder:validation:XValidation:rule="!has(self.ingress) || !self.ingress.enabled || (has(self.publicURL) && size(self.publicURL) > 0)",message="ingress.enabled requires publicURL to be set"
+// +kubebuilder:validation:XValidation:rule="!has(self.ingress) || !has(self.ingress.enabled) || !self.ingress.enabled || (has(self.publicURL) && size(self.publicURL) > 0)",message="ingress.enabled requires publicURL to be set"
 type TrussInstanceSpec struct {
 	// version is the image tag for the truss-api and dashboard images
 	// (e.g. "0.2.0" or "latest").
@@ -98,7 +98,7 @@ type ComponentSpec struct {
 
 // DepSpec is a bring-your-own or operator-managed dependency reference.
 //
-// +kubebuilder:validation:XValidation:rule="self.mode != 'byo' || (has(self.existingSecret) && size(self.existingSecret) > 0)",message="mode 'byo' requires existingSecret"
+// +kubebuilder:validation:XValidation:rule="!has(self.mode) || self.mode != 'byo' || (has(self.existingSecret) && size(self.existingSecret) > 0)",message="mode 'byo' requires existingSecret"
 type DepSpec struct {
 	// mode selects whether Truss consumes an existing dependency ("byo") or the
 	// operator provisions one ("managed"). v1 supports "byo".
