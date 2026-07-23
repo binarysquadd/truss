@@ -48,6 +48,7 @@ type TrussInstanceReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors;prometheusrules,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile moves the cluster toward the desired state described by a TrussInstance.
 // It is level-triggered and idempotent: it re-derives the whole desired state every
@@ -129,6 +130,23 @@ func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 	for _, o := range resObjs {
+		if err := r.applySSA(ctx, o); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Observability: Prometheus-operator objects (ServiceMonitor / PrometheusRule), created only
+	// when requested AND their CRDs exist, so a cluster without the operator is unaffected.
+	obsObjs, err := r.desiredObservability(&ti)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	for _, o := range obsObjs {
+		gvk := o.GetObjectKind().GroupVersionKind()
+		if !r.crdPresent(gvk) {
+			log.Info("skipping observability object; CRD not installed", "kind", gvk.Kind)
+			continue
+		}
 		if err := r.applySSA(ctx, o); err != nil {
 			return ctrl.Result{}, err
 		}

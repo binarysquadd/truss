@@ -160,8 +160,12 @@ var _ = Describe("TrussInstance Controller", func() {
 						PDB:            appsv1alpha1.PDBSpec{Enabled: true, MinAvailable: &minAvail},
 						TopologySpread: true,
 					},
-					Ingress:       appsv1alpha1.IngressSpec{Enabled: true},
-					Observability: appsv1alpha1.ObservabilitySpec{OTLPEndpoint: "http://otel-collector:4318"},
+					Ingress: appsv1alpha1.IngressSpec{Enabled: true},
+					Observability: appsv1alpha1.ObservabilitySpec{
+						OTLPEndpoint:   "http://otel-collector:4318",
+						ServiceMonitor: true, // envtest has no Prometheus CRDs → must skip gracefully
+						PrometheusRule: true,
+					},
 				},
 			})).To(Succeed())
 
