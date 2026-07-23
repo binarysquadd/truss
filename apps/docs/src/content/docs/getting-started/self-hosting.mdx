@@ -6,12 +6,14 @@ description: Run Truss for real with Docker Compose or the Helm chart, log in, a
 import { Aside } from '@astrojs/starlight/components';
 
 The [Quickstart](../quickstart/) gets a single instance running in one command. This page is
-the production view: Docker Compose for a single box, the Helm chart for Kubernetes, the
-first-login flow, and the hardening you should do before exposing it to the internet.
+the production view: the **three ways to run Truss** — Docker Compose for a single box, the
+Helm chart for Kubernetes, and the operator for declarative / fleet management — plus the
+first-login flow and the hardening you should do before exposing it to the internet.
 
-Neither path needs a repo clone. Both pull published images and bring up the full stack: the
-API, the dashboard, Postgres, the Ory services (Kratos, Keto, Hydra, Oathkeeper), MinIO,
-flagd, and Valkey.
+None of these paths needs a repo clone. All pull the published (cosign-signed)
+`ghcr.io/binarysquadd/truss-*` images and bring up the full stack: the API, the dashboard,
+Postgres, the Ory services (Kratos, Keto, Hydra, Oathkeeper), MinIO, flagd, and Valkey. The
+current release is **v0.3.0**.
 
 <Aside type="tip" title="Or skip the ops entirely">
 [Truss Cloud](https://truss.binarysquad.org) runs and manages all of this for you, plus
@@ -43,28 +45,71 @@ from source instead, clone the repo and uncomment the `build:` blocks in the fil
 
 ## Kubernetes (Helm)
 
-The chart is published as an OCI artifact, so one `helm install` pulls it directly. No
-operators, no clone:
+The chart is published (and cosign-signed) as an OCI artifact, so one `helm install` pulls it
+directly. No operator, no clone. Secrets you leave unset are **auto-generated on first install
+and reused across upgrades**, so a bare install just works:
 
 ```bash
-helm install truss oci://ghcr.io/binarysquadd/charts/truss --version 0.1.0 \
-  -n truss --create-namespace \
-  --set secrets.encryptionKey=$(openssl rand -hex 32) \
-  --set secrets.dbPassword=$(openssl rand -hex 16) \
-  --set secrets.minioSecretKey=$(openssl rand -hex 16) \
-  --set secrets.valkeyPassword=$(openssl rand -hex 16)
+helm install truss oci://ghcr.io/binarysquadd/charts/truss --version 0.3.0 \
+  -n truss --create-namespace
 
 kubectl -n truss port-forward svc/truss-dashboard 3000:80   # → http://localhost:3000
 ```
 
 <Aside type="note">
-Use the latest chart version from the [Releases page](https://github.com/binarysquadd/truss/releases)
-in place of `0.1.0`. Pin a version in production rather than tracking the newest.
+Pin a chart version in production (see the [Releases page](https://github.com/binarysquadd/truss/releases))
+rather than tracking the newest.
 </Aside>
 
-Images are pinned in the chart and overridable via `images.*`. For production set `publicUrl` +
-`corsAllowedOrigins` and front it with TLS. Toggle optional components with their flags (e.g.
-`--set mcp.enabled=false`).
+Bring your own secrets with `--set secrets.encryptionKey=…` (or from an external secret manager);
+any left blank are generated. Images are pinned in the chart and overridable via `images.*`. For
+production set `publicUrl` + `corsAllowedOrigins` and front it with TLS. Toggle optional components
+with their flags (e.g. `--set mcp.enabled=false`), and turn on the bundled 4-signal observability
+stack (Grafana / Prometheus / Loki / Tempo) with `--set observability.backends.enabled=true`.
+
+## Kubernetes (Operator)
+
+The operator is the declarative, fleet-friendly path: you apply a `TrussInstance` custom resource
+and a controller reconciles the app tier to match — healing drift, reporting status conditions, and
+(optionally) emitting a `ServiceMonitor` + multi-window burn-rate SLO `PrometheusRule` for your
+Prometheus stack. It manages the **app tier** (API + dashboard) and expects you to bring the
+backing dependencies (starting with Postgres).
+
+Install the controller + CRD from the release bundle, provide a Postgres connection Secret (a key
+named `database-url`), then apply an instance:
+
+```bash
+kubectl apply -f https://github.com/binarysquadd/truss/releases/download/v0.3.0/install.yaml
+
+kubectl create namespace truss
+kubectl -n truss create secret generic truss-db \
+  --from-literal=database-url='postgres://user:pass@your-postgres:5432/truss'
+
+kubectl apply -f - <<'EOF'
+apiVersion: apps.truss.binarysquad.org/v1alpha1
+kind: TrussInstance
+metadata: { name: truss, namespace: truss }
+spec:
+  version: "0.3.0"
+  publicURL: https://truss.example.com   # required when ingress.enabled
+  scaling: { profile: small }            # small | medium | large
+  dependencies:
+    postgres: { mode: byo, existingSecret: truss-db }
+  observability:
+    serviceMonitor: true                 # created only if the Prometheus-operator CRDs exist
+    prometheusRule: true
+    otlpEndpoint: http://otel-collector.monitoring:4318   # optional: push traces/metrics/logs
+EOF
+
+kubectl -n truss get trussinstance truss -o jsonpath='{.status.phase}'   # → Ready
+```
+
+<Aside type="tip">
+The operator **integrates** with your cluster's observability stack (emits the monitoring CRs,
+injects the OTLP endpoint); it does not bundle Grafana/Loki/Tempo itself. Use the Helm chart's
+`observability.backends.enabled` if you want an in-cluster stack, or point `otlpEndpoint` at your
+own collector.
+</Aside>
 
 ## First login
 
@@ -91,7 +136,9 @@ See [Configuration](../configuration/) for the full list of environment variable
 - **`CORS_ALLOWED_ORIGINS`** — set to your dashboard origin(s). CORS fails closed; if unset,
   the browser app cannot reach the API (intentional).
 - **`ENCRYPTION_KEY`** — a random 32+ char string used to encrypt saved connection passwords.
-  **If you lose it, those are unrecoverable.** Set it once and back it up.
+  **If you lose it, those are unrecoverable.** The Helm chart and operator auto-generate and
+  persist it (in the `truss-secrets` Secret); on Compose you set it yourself. Either way, back it
+  up — and note the app refuses to start in production with a placeholder (`change-me…`) value.
 - **`COOKIE_SECURE`** — the session cookie is marked `Secure` only when you serve over HTTPS.
   Serving over plain HTTP keeps it off so the cookie is not dropped; set `COOKIE_SECURE=true`
   behind an HTTPS-terminating proxy the API cannot detect.

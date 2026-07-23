@@ -27,17 +27,46 @@ Supabase/Appwrite-style backend you fully own.
 ## Quickstart (self-host)
 
 The whole stack — Postgres, Kratos (auth), Keto (authz), MinIO (storage), Valkey (cache),
-flagd, the API, and the dashboard — comes up from one command. Two supported paths:
+flagd, the API, and the dashboard — comes up from one command. **Three supported ways to run
+Truss**, all off the same images (latest release: **v0.3.0**):
 
-**Kubernetes (umbrella Helm chart)** — one `helm install`, no operators required:
+**1. Docker Compose** — single box, simplest. See [`selfhosted/README.md`](selfhosted/README.md):
 
 ```bash
-helm install truss ./charts/truss -n truss --create-namespace \
-  --set secrets.encryptionKey=$(openssl rand -hex 32) \
-  --set secrets.dbPassword=$(openssl rand -hex 16) \
-  --set secrets.minioSecretKey=$(openssl rand -hex 16) \
-  --set secrets.valkeyPassword=$(openssl rand -hex 16)
-# then: kubectl -n truss port-forward svc/truss-dashboard 3000:80  → http://localhost:3000
+cp .env.selfhosted.example .env.selfhosted   # fill in generated secrets
+docker compose -f docker-compose.selfhosted.yml --env-file .env.selfhosted up -d
+# optional 4-signal observability (Grafana/Prometheus/Loki/Tempo):
+#   -f docker-compose.selfhosted.yml -f docker-compose.observability.yml
+```
+
+**2. Kubernetes — umbrella Helm chart**, no operator required. Secrets auto-generate on first
+install (persisted + reused across upgrades), so it really is one command:
+
+```bash
+helm install truss oci://ghcr.io/binarysquadd/charts/truss --version 0.3.0 \
+  -n truss --create-namespace
+# from source instead: helm install truss ./charts/truss -n truss --create-namespace
+kubectl -n truss port-forward svc/truss-dashboard 3000:80   # → http://localhost:3000
+```
+
+Bring your own secrets with `--set secrets.encryptionKey=…` (any left blank are generated).
+Flip on the bundled observability stack with `--set observability.backends.enabled=true`.
+
+**3. Kubernetes — the Truss operator**, declarative and fleet-friendly (a `TrussInstance` CRD
+reconciles the app tier, with drift-healing, status conditions, and optional ServiceMonitor /
+burn-rate SLO alerts). Bring your own Postgres (a Secret with a `database-url` key):
+
+```bash
+kubectl apply -f https://github.com/binarysquadd/truss/releases/download/v0.3.0/install.yaml
+kubectl apply -f - <<'EOF'
+apiVersion: apps.truss.binarysquad.org/v1alpha1
+kind: TrussInstance
+metadata: { name: truss, namespace: truss }
+spec:
+  version: "0.3.0"
+  dependencies:
+    postgres: { mode: byo, existingSecret: truss-db }
+EOF
 ```
 
 **First login:** on first boot Truss seeds a default admin (`admin@truss.local`) so you
@@ -47,15 +76,9 @@ can sign in right away. The password is printed once to the API logs:
 **Settings → Account**. Set `TRUSS_BOOTSTRAP_ADMIN_PASSWORD` for known creds, or
 `TRUSS_BOOTSTRAP_ADMIN=false` to disable seeding and register the first user yourself.
 
-Images are published at `ghcr.io/binarysquadd/truss-{api,dashboard,mcp}` (override `images.*`
-to pin/replace). For production, set `publicUrl` + `corsAllowedOrigins` and front it with TLS.
-
-**Docker Compose** — see [`selfhosted/README.md`](selfhosted/README.md):
-
-```bash
-cp .env.selfhosted.example .env.selfhosted   # fill in generated secrets
-docker compose -f docker-compose.selfhosted.yml --env-file .env.selfhosted up -d
-```
+Images are published (and cosign-signed) at `ghcr.io/binarysquadd/truss-{api,dashboard,mcp,operator}`
+(override `images.*` to pin/replace). For production, set `publicUrl` + `corsAllowedOrigins` and
+front it with TLS. Full deployment guide: [docs](apps/docs) → **Getting Started → Ways to run Truss**.
 
 ## Development
 

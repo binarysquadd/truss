@@ -52,9 +52,11 @@ The open-source core is single-org / single-project; multi-org and multi-project
 
 ## Two ways to run it
 
-- **Self-host** — one command pulls the published images and brings up the whole stack on your
-  own machine or server. No repo clone. Start with the [Quickstart](./getting-started/quickstart/),
-  then [Self-Hosting](./getting-started/self-hosting/) for production (Helm, TLS, backups).
+- **Self-host** — pull the published, cosign-signed images (latest: **v0.3.0**) and bring up the
+  whole stack, three ways: **Docker Compose** (single box), the **Helm chart** (Kubernetes, one
+  `helm install`), or the **operator** (a declarative `TrussInstance` CRD). No repo clone. Start with
+  the [Quickstart](./getting-started/quickstart/), then [Self-Hosting](./getting-started/self-hosting/)
+  for all three plus production hardening.
 - **[Truss Cloud](https://truss.binarysquad.org)** — the same platform, hosted and managed, with
   multi-org, metering, and managed backups. Create an account and skip the ops.
 
