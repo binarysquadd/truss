@@ -32,6 +32,9 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+      - name: Debug release-please outputs
+        run: |
+          echo "ALL OUTPUTS: ${{ toJSON(steps.rp.outputs) }}"
 
   images:
     name: Build, sign & publish images
