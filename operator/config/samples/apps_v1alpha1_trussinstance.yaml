@@ -1,0 +1,9 @@
+apiVersion: apps.truss.binarysquad.org/v1alpha1
+kind: TrussInstance
+metadata:
+  labels:
+    app.kubernetes.io/name: operator
+    app.kubernetes.io/managed-by: kustomize
+  name: trussinstance-sample
+spec:
+  # TODO(user): Add fields here
