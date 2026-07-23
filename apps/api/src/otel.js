@@ -1,23 +1,45 @@
 /**
- * OpenTelemetry tracing bootstrap.
+ * OpenTelemetry bootstrap (unified SDK).
  *
- * Loaded BEFORE the app via `node --import ./src/otel.js src/index.js` (and the same in the
- * Docker CMD) so the auto-instrumentations can patch http / express / pg / ioredis as they
- * load — turning every request into a span tree (HTTP → route → DB queries → outbound calls)
- * with no manual code.
+ * Loaded BEFORE the app via `node --import ./src/otel.js src/index.js` so the OTEL global
+ * providers are installed before app modules create instruments, and the auto-instrumentations
+ * can patch http / express / pg / ioredis as they load.
  *
- * Opt-in, per the "instrument, don't impose" principle — tracing is OFF unless the operator
- * configures an exporter, so default self-hosters pay nothing:
- *   - OTEL_EXPORTER_OTLP_ENDPOINT=https://collector:4318  → export via OTLP/HTTP
- *   - OTEL_TRACES_EXPORTER=console                          → print spans to stdout (debug)
+ * Signal policy ("instrument, don't impose"):
+ *   - METRICS are ALWAYS on: a Prometheus scrape endpoint (/metrics, served by the app) works with
+ *     zero config, and metrics are ALSO pushed via OTLP when an endpoint is configured.
+ *   - TRACES (and OTLP metric push) are opt-in, gated by OTEL_EXPORTER_OTLP_ENDPOINT
+ *     (or OTEL_TRACES_EXPORTER=console for debug).
  *
- * All other behavior follows the standard OTEL_* env vars (service name, sampling, headers).
- * This file is self-contained (only OpenTelemetry imports) so it can be copied into the
- * runtime image and run via --import without the app bundle.
+ * All behavior follows standard OTEL_* env vars (service name, sampling, headers).
  */
+import { metrics } from "@opentelemetry/api";
+import { MeterProvider, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
+import { PrometheusExporter } from "@opentelemetry/exporter-prometheus";
+import { resourceFromAttributes } from "@opentelemetry/resources";
+
 const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 const consoleMode = process.env.OTEL_TRACES_EXPORTER === "console";
+const serviceName = process.env.OTEL_SERVICE_NAME || "truss-api";
+const resource = resourceFromAttributes({ "service.name": serviceName });
 
+// ── Metrics: always on ─────────────────────────────────────────────────────
+// Prometheus pull (preventServerStart: the app serves /metrics itself via the
+// exporter's request handler, so we keep one HTTP server on :8787) + optional OTLP push.
+const prometheusExporter = new PrometheusExporter({ preventServerStart: true });
+const metricReaders = [prometheusExporter];
+if (endpoint) {
+  const { OTLPMetricExporter } = await import("@opentelemetry/exporter-metrics-otlp-http");
+  metricReaders.push(new PeriodicExportingMetricReader({ exporter: new OTLPMetricExporter() }));
+}
+// RED histogram buckets are pinned via the instrument's `advice` in lib/metrics.js.
+const meterProvider = new MeterProvider({ resource, readers: metricReaders });
+metrics.setGlobalMeterProvider(meterProvider);
+// Shared with lib/metrics.js's /metrics handler (otel.js loads before the app bundle).
+globalThis.__trussPrometheusExporter = prometheusExporter;
+process.on("SIGTERM", () => { meterProvider.shutdown().catch(() => {}); });
+
+// ── Traces (+ OTLP metric push already wired above): opt-in ────────────────
 if (endpoint || consoleMode) {
   const { NodeSDK } = await import("@opentelemetry/sdk-node");
   const { getNodeAutoInstrumentations } = await import("@opentelemetry/auto-instrumentations-node");
@@ -25,18 +47,16 @@ if (endpoint || consoleMode) {
   const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
 
   const spanProcessor = consoleMode
-    ? new SimpleSpanProcessor(new ConsoleSpanExporter())   // immediate, for debugging
-    : new BatchSpanProcessor(new OTLPTraceExporter());      // batched, reads OTEL_EXPORTER_OTLP_ENDPOINT
+    ? new SimpleSpanProcessor(new ConsoleSpanExporter())
+    : new BatchSpanProcessor(new OTLPTraceExporter());
 
   const sdk = new NodeSDK({
-    serviceName: process.env.OTEL_SERVICE_NAME || "truss-api",
+    resource,
     spanProcessors: [spanProcessor],
     instrumentations: [
       getNodeAutoInstrumentations({
-        // fs spans are extremely chatty and rarely useful; everything else stays on.
         "@opentelemetry/instrumentation-fs": { enabled: false },
-        // We inject trace_id/span_id into logs ourselves via a pino mixin (lib/logger.js),
-        // so disable the pino auto-instrumentation to avoid double-injection.
+        // We inject trace_id/span_id into logs via a pino mixin (lib/logger.js).
         "@opentelemetry/instrumentation-pino": { enabled: false },
       }),
     ],
