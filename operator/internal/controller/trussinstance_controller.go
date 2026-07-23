@@ -67,7 +67,7 @@ func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	log.Info("reconciled TrussInstance", "name", ti.Name, "apiReplicas", ti.Spec.Replicas.API)
+	log.Info("reconciled TrussInstance", "name", ti.Name, "apiReplicas", ti.Spec.Components.API.Replicas)
 	return ctrl.Result{}, nil
 }
 
@@ -89,12 +89,12 @@ func apiEnv(ti *appsv1alpha1.TrussInstance) []corev1.EnvVar {
 	if ti.Spec.PublicURL != "" {
 		env = append(env, corev1.EnvVar{Name: "TRUSS_PUBLIC_URL", Value: ti.Spec.PublicURL})
 	}
-	if ti.Spec.DatabaseSecret != "" {
+	if ti.Spec.Dependencies.Postgres.ExistingSecret != "" {
 		env = append(env, corev1.EnvVar{
 			Name: "DATABASE_URL",
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: ti.Spec.DatabaseSecret},
+					LocalObjectReference: corev1.LocalObjectReference{Name: ti.Spec.Dependencies.Postgres.ExistingSecret},
 					Key:                  "database-url",
 				},
 			},
@@ -105,7 +105,7 @@ func apiEnv(ti *appsv1alpha1.TrussInstance) []corev1.EnvVar {
 
 func (r *TrussInstanceReconciler) reconcileAPIDeployment(ctx context.Context, ti *appsv1alpha1.TrussInstance) error {
 	labels := apiLabels(ti)
-	replicas := ti.Spec.Replicas.API
+	replicas := ti.Spec.Components.API.Replicas
 
 	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: ti.Name + "-api", Namespace: ti.Namespace}}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, dep, func() error {

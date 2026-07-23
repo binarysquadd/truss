@@ -14,7 +14,17 @@ spec:
     singular: trussinstance
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.version
+      name: Version
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: TrussInstance is the Schema for the trussinstances API
@@ -39,32 +49,345 @@ spec:
           spec:
             description: spec defines the desired state of TrussInstance
             properties:
-              databaseSecret:
+              components:
+                description: components configures the Truss application tier (api
+                  + dashboard).
+                properties:
+                  api:
+                    description: api is the Truss backend API.
+                    properties:
+                      podTemplate:
+                        description: |-
+                          podTemplate is a strategic-merge patch applied over the operator-generated
+                          pod template spec. Escape hatch for arbitrary pod customization
+                          (nodeSelector, tolerations, sidecars, extra volumes) without forking.
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                      replicas:
+                        default: 1
+                        description: replicas is the desired pod count for this component.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      resources:
+                        description: |-
+                          resources overrides the container resource requests/limits derived from
+                          the scaling profile.
+                        properties:
+                          claims:
+                            description: |-
+                              Claims lists the names of resources, defined in spec.resourceClaims,
+                              that are used by this container.
+
+                              This field depends on the
+                              DynamicResourceAllocation feature gate.
+
+                              This field is immutable. It can only be set for containers.
+                            items:
+                              description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                              properties:
+                                name:
+                                  description: |-
+                                    Name must match the name of one entry in pod.spec.resourceClaims of
+                                    the Pod where this field is used. It makes that resource available
+                                    inside a container.
+                                  type: string
+                                request:
+                                  description: |-
+                                    Request is the name chosen for a request in the referenced claim.
+                                    If empty, everything from the claim is made available, otherwise
+                                    only the result of this request.
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - name
+                            x-kubernetes-list-type: map
+                          limits:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Limits describes the maximum amount of compute resources allowed.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                          requests:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Requests describes the minimum amount of compute resources required.
+                              If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                              otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                        type: object
+                    type: object
+                  dashboard:
+                    description: dashboard is the Truss console SPA.
+                    properties:
+                      podTemplate:
+                        description: |-
+                          podTemplate is a strategic-merge patch applied over the operator-generated
+                          pod template spec. Escape hatch for arbitrary pod customization
+                          (nodeSelector, tolerations, sidecars, extra volumes) without forking.
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                      replicas:
+                        default: 1
+                        description: replicas is the desired pod count for this component.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      resources:
+                        description: |-
+                          resources overrides the container resource requests/limits derived from
+                          the scaling profile.
+                        properties:
+                          claims:
+                            description: |-
+                              Claims lists the names of resources, defined in spec.resourceClaims,
+                              that are used by this container.
+
+                              This field depends on the
+                              DynamicResourceAllocation feature gate.
+
+                              This field is immutable. It can only be set for containers.
+                            items:
+                              description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                              properties:
+                                name:
+                                  description: |-
+                                    Name must match the name of one entry in pod.spec.resourceClaims of
+                                    the Pod where this field is used. It makes that resource available
+                                    inside a container.
+                                  type: string
+                                request:
+                                  description: |-
+                                    Request is the name chosen for a request in the referenced claim.
+                                    If empty, everything from the claim is made available, otherwise
+                                    only the result of this request.
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - name
+                            x-kubernetes-list-type: map
+                          limits:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Limits describes the maximum amount of compute resources allowed.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                          requests:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Requests describes the minimum amount of compute resources required.
+                              If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                              otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                        type: object
+                    type: object
+                type: object
+              dependencies:
                 description: |-
-                  databaseSecret names a Secret in the same namespace holding the API's
-                  Postgres connection string under the key "database-url". v1 references an
-                  existing database; operator-managed Postgres (CloudNativePG) is a later phase.
-                type: string
+                  dependencies wires Truss to its backing services. In v1 every dependency
+                  is "bring your own" (an existing Secret/endpoint); operator-managed
+                  dependencies (CloudNativePG, MinIO operator) are a later phase.
+                properties:
+                  cache:
+                    description: cache is the Valkey/Redis cache + KV store.
+                    properties:
+                      existingSecret:
+                        description: |-
+                          existingSecret names a Secret in the same namespace holding the
+                          connection details for this dependency.
+                        type: string
+                      mode:
+                        description: |-
+                          mode selects whether Truss consumes an existing dependency ("byo") or the
+                          operator provisions one ("managed"). v1 supports "byo".
+                        enum:
+                        - byo
+                        - managed
+                        type: string
+                    type: object
+                    x-kubernetes-validations:
+                    - message: mode 'byo' requires existingSecret
+                      rule: self.mode != 'byo' || (has(self.existingSecret) && size(self.existingSecret)
+                        > 0)
+                  flags:
+                    description: flags is the flagd/OpenFeature feature-flag backend.
+                    properties:
+                      existingSecret:
+                        description: |-
+                          existingSecret names a Secret in the same namespace holding the
+                          connection details for this dependency.
+                        type: string
+                      mode:
+                        description: |-
+                          mode selects whether Truss consumes an existing dependency ("byo") or the
+                          operator provisions one ("managed"). v1 supports "byo".
+                        enum:
+                        - byo
+                        - managed
+                        type: string
+                    type: object
+                    x-kubernetes-validations:
+                    - message: mode 'byo' requires existingSecret
+                      rule: self.mode != 'byo' || (has(self.existingSecret) && size(self.existingSecret)
+                        > 0)
+                  ory:
+                    description: ory is the identity/authz/oauth2/gateway stack.
+                    properties:
+                      endpoints:
+                        description: endpoints are the base URLs the API uses to reach
+                          the Ory services.
+                        properties:
+                          hydra:
+                            type: string
+                          keto:
+                            type: string
+                          kratos:
+                            type: string
+                          oathkeeper:
+                            type: string
+                        type: object
+                      mode:
+                        enum:
+                        - byo
+                        type: string
+                    type: object
+                  postgres:
+                    description: |-
+                      postgres is the system-of-record database (connection string under key
+                      "database-url" in the referenced Secret).
+                    properties:
+                      existingSecret:
+                        description: |-
+                          existingSecret names a Secret in the same namespace holding the
+                          connection details for this dependency.
+                        type: string
+                      mode:
+                        description: |-
+                          mode selects whether Truss consumes an existing dependency ("byo") or the
+                          operator provisions one ("managed"). v1 supports "byo".
+                        enum:
+                        - byo
+                        - managed
+                        type: string
+                    type: object
+                    x-kubernetes-validations:
+                    - message: mode 'byo' requires existingSecret
+                      rule: self.mode != 'byo' || (has(self.existingSecret) && size(self.existingSecret)
+                        > 0)
+                  storage:
+                    description: storage is the S3-compatible object store (MinIO).
+                    properties:
+                      existingSecret:
+                        description: |-
+                          existingSecret names a Secret in the same namespace holding the
+                          connection details for this dependency.
+                        type: string
+                      mode:
+                        description: |-
+                          mode selects whether Truss consumes an existing dependency ("byo") or the
+                          operator provisions one ("managed"). v1 supports "byo".
+                        enum:
+                        - byo
+                        - managed
+                        type: string
+                    type: object
+                    x-kubernetes-validations:
+                    - message: mode 'byo' requires existingSecret
+                      rule: self.mode != 'byo' || (has(self.existingSecret) && size(self.existingSecret)
+                        > 0)
+                type: object
+              ingress:
+                description: ingress configures an Ingress fronting the dashboard
+                  and API.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      annotations are added to the generated Ingress (e.g. cert-manager,
+                      nginx rewrite rules).
+                    type: object
+                  className:
+                    description: className selects the IngressClass. nil uses the
+                      cluster default.
+                    type: string
+                  enabled:
+                    type: boolean
+                  tls:
+                    description: tls enables TLS on the Ingress using the publicURL
+                      host.
+                    type: boolean
+                type: object
               publicURL:
                 description: |-
                   publicURL is the browser-facing URL of the dashboard. It drives the
-                  session-cookie Secure flag and the API's CORS configuration.
+                  Ingress host, the session-cookie Secure flag, and the API CORS config.
                 type: string
-              replicas:
-                description: replicas controls how many api and dashboard pods run.
+              resilience:
+                description: resilience configures PodDisruptionBudgets and topology
+                  spread.
                 properties:
-                  api:
-                    default: 1
-                    description: api is the number of truss-api replicas.
-                    format: int32
-                    minimum: 0
-                    type: integer
-                  dashboard:
-                    default: 1
-                    description: dashboard is the number of dashboard replicas.
-                    format: int32
-                    minimum: 0
-                    type: integer
+                  pdb:
+                    description: pdb configures a PodDisruptionBudget per component.
+                    properties:
+                      enabled:
+                        type: boolean
+                      minAvailable:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: |-
+                          minAvailable is the minimum number of pods that must stay available
+                          during voluntary disruptions. Defaults to 1 when the PDB is enabled.
+                        x-kubernetes-int-or-string: true
+                    type: object
+                  topologySpread:
+                    description: |-
+                      topologySpread adds zone/host topology-spread constraints and soft
+                      pod anti-affinity to the app-tier pods.
+                    type: boolean
+                type: object
+              scaling:
+                description: scaling selects a resource profile for the app tier.
+                properties:
+                  profile:
+                    default: small
+                    description: |-
+                      profile picks a preset of resource requests/limits: small (dev),
+                      medium, or large (high-traffic).
+                    enum:
+                    - small
+                    - medium
+                    - large
+                    type: string
                 type: object
               version:
                 default: latest
@@ -73,20 +396,43 @@ spec:
                   (e.g. "0.2.0" or "latest").
                 type: string
             type: object
+            x-kubernetes-validations:
+            - message: ingress.enabled requires publicURL to be set
+              rule: '!has(self.ingress) || !self.ingress.enabled || (has(self.publicURL)
+                && size(self.publicURL) > 0)'
           status:
             description: status defines the observed state of TrussInstance
             properties:
+              componentStatus:
+                description: componentStatus reports per-component readiness.
+                properties:
+                  api:
+                    description: ComponentStatus reports observed readiness for one
+                      component.
+                    properties:
+                      desired:
+                        format: int32
+                        type: integer
+                      ready:
+                        format: int32
+                        type: integer
+                    type: object
+                  dashboard:
+                    description: ComponentStatus reports observed readiness for one
+                      component.
+                    properties:
+                      desired:
+                        format: int32
+                        type: integer
+                      ready:
+                        format: int32
+                        type: integer
+                    type: object
+                type: object
               conditions:
                 description: |-
-                  conditions represent the current state of the TrussInstance resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                  conditions represent the current state of the TrussInstance.
+                  Types: "Ready", "Progressing", "DependenciesReady", "Degraded".
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -145,6 +491,20 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              observedGeneration:
+                description: observedGeneration is the .metadata.generation the controller
+                  last acted on.
+                format: int64
+                type: integer
+              phase:
+                description: phase is a coarse lifecycle summary for humans / kubectl
+                  columns.
+                enum:
+                - Pending
+                - Provisioning
+                - Ready
+                - Degraded
+                type: string
             type: object
         required:
         - spec

@@ -6,4 +6,31 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: trussinstance-sample
 spec:
-  # TODO(user): Add fields here
+  version: "0.2.0"
+  publicURL: https://truss.example.com
+  components:
+    api:
+      replicas: 1
+    dashboard:
+      replicas: 1
+  dependencies:
+    # Bring-your-own Postgres: a Secret with key "database-url".
+    postgres:
+      mode: byo
+      existingSecret: truss-db
+    # Bring-your-own Ory stack (no upstream operator exists).
+    ory:
+      mode: byo
+      endpoints:
+        kratos: http://truss-kratos:4433
+        keto: http://truss-keto:4466
+        hydra: http://truss-hydra:4444
+        oathkeeper: http://truss-oathkeeper:4455
+  scaling:
+    profile: small
+  resilience:
+    pdb:
+      enabled: false
+    topologySpread: false
+  ingress:
+    enabled: false
