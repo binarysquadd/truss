@@ -1,0 +1,53 @@
+name: E2E (live)
+
+# The heavy, live end-to-end gates: they build images and stand up the full stack (compose + two
+# kind clusters), so they run nightly and on demand rather than per-PR. Each script is the same one
+# used locally (hack/e2e-*.sh, operator/hack/e2e-kind.sh) — a fresh runner is the clean room.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC nightly
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    name: Compose stack + 3 signals
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose e2e
+        run: bash hack/e2e-compose.sh
+
+  helm-kind:
+    name: Helm chart on kind + 3 signals
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - uses: azure/setup-kubectl@v4
+      - uses: helm/kind-action@v1
+        with:
+          install_only: true
+      - name: Helm kind e2e
+        run: bash hack/e2e-helm-kind.sh
+
+  operator-kind:
+    name: Operator on kind (reconcile + o11y integrate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: operator/go.mod
+      - uses: azure/setup-kubectl@v4
+      - uses: helm/kind-action@v1
+        with:
+          install_only: true
+      - name: Operator kind e2e
+        working-directory: operator
+        run: bash hack/e2e-kind.sh

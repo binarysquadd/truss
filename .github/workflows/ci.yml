@@ -1,0 +1,65 @@
+name: CI
+
+# Fast, dependency-free gates on every PR and push to main. Integration/e2e (which need a live
+# stack or a kind cluster) run in e2e.yml, not here, so this stays quick and always-green.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Lint + typecheck + build (dashboard/api)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Typecheck + lint
+        run: npm run check
+      - name: Build dashboard (catches type/build errors)
+        run: npm run build
+      - name: API unit tests
+        run: npm run test:unit --workspace @truss/api --if-present
+
+  helm:
+    name: Helm lint + template (both o11y states)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Lint
+        run: helm lint charts/truss
+      - name: Template renders (default = backends off)
+        run: helm template t charts/truss > /dev/null
+      - name: Template renders (observability fully on)
+        run: |
+          helm template t charts/truss \
+            --set observability.backends.enabled=true \
+            --set observability.serviceMonitor.enabled=true \
+            --set observability.prometheusRule.enabled=true \
+            --set secrets.encryptionKey=ci-encryption-key-0123456789-abcdefghij > /dev/null
+
+  operator:
+    name: Operator unit + envtest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: operator/go.mod
+      - name: Test (envtest) + build
+        working-directory: operator
+        run: |
+          make test
+          make build
