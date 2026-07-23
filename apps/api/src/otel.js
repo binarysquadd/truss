@@ -50,14 +50,24 @@ if (endpoint || consoleMode) {
     ? new SimpleSpanProcessor(new ConsoleSpanExporter())
     : new BatchSpanProcessor(new OTLPTraceExporter());
 
+  // Logs: when an OTLP endpoint is set, ship pino logs as OTLP. instrumentation-pino bridges
+  // pino → the Logs SDK AND injects trace_id/span_id into the stdout lines, so lib/logger.js
+  // needs no manual trace mixin.
+  const logRecordProcessors = [];
+  if (endpoint) {
+    const { BatchLogRecordProcessor } = await import("@opentelemetry/sdk-logs");
+    const { OTLPLogExporter } = await import("@opentelemetry/exporter-logs-otlp-http");
+    logRecordProcessors.push(new BatchLogRecordProcessor(new OTLPLogExporter()));
+  }
+
   const sdk = new NodeSDK({
     resource,
     spanProcessors: [spanProcessor],
+    logRecordProcessors,
     instrumentations: [
       getNodeAutoInstrumentations({
+        // fs spans are extremely chatty and rarely useful; everything else stays on.
         "@opentelemetry/instrumentation-fs": { enabled: false },
-        // We inject trace_id/span_id into logs via a pino mixin (lib/logger.js).
-        "@opentelemetry/instrumentation-pino": { enabled: false },
       }),
     ],
   });
