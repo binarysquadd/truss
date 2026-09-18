@@ -53,6 +53,7 @@ export default defineConfig({
             { label: "Database", slug: "guides/database" },
             { label: "Extensions", slug: "guides/extensions" },
             { label: "Branching & Backups", slug: "guides/branching" },
+            { label: "High Availability", slug: "guides/high-availability" },
             { label: "Migrations", slug: "guides/migrations" },
             { label: "Foreign Data Wrappers", slug: "guides/fdw" },
             { label: "Authentication", slug: "guides/authentication" },

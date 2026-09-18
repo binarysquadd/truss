@@ -1,0 +1,84 @@
+---
+title: High Availability
+description: Run Postgres with streaming replicas and automatic failover, and understand when it actually helps.
+---
+
+Truss runs Postgres via the [CloudNativePG](https://cloudnative-pg.io) operator. A
+single instance is the default and is fine for most self-hosted setups. When you
+want redundancy, you turn on replicas and the operator gives you streaming
+replication plus automatic failover, no extra tooling.
+
+## The default is one instance
+
+```yaml
+# deploy/k8s/values/postgres.yaml
+cluster:
+  name: truss-postgres
+  instances: 1        # default: single primary, lightweight, runs anywhere
+```
+
+One instance keeps the footprint small (one PVC, one set of resources). It's the
+right default for a homelab, a single VPS, or any evaluation.
+
+## Turning on HA
+
+Set `instances` to 3 (odd numbers are conventional, for quorum-style promotion):
+
+```yaml
+cluster:
+  name: truss-postgres
+  instances: 3        # 1 primary + 2 streaming replicas + automatic failover
+```
+
+The operator creates the replicas with `pg_basebackup`, streams WAL to them, and
+manages three Services:
+
+| Service | Points at | Use for |
+|---|---|---|
+| `truss-postgres-rw` | current **primary** | writes (this is what `DATABASE_URL` uses) |
+| `truss-postgres-ro` | **replicas** only | read-only queries you want off the primary |
+| `truss-postgres-r`  | any instance | reads that don't care primary vs replica |
+
+:::caution[Replicas are not HA on a single node]
+On a single-node cluster all replicas land on the **same machine**, so if that node
+dies, every copy dies with it. You get the *failover mechanism* and read scaling,
+but **not** fault tolerance. Real HA needs `instances: 3` spread across **separate
+nodes / availability zones**.
+:::
+
+## Async vs sync replicas
+
+By default replication is **asynchronous**: the primary commits without waiting for
+replicas. It's fast, but on a failover you can lose the last few transactions that
+hadn't reached the promoted replica yet (a small RPO window).
+
+For **zero data loss**, require a synchronous replica, the primary then waits for a
+replica to confirm each commit, trading a little write latency for RPO = 0:
+
+```yaml
+cluster:
+  instances: 3
+  postgresql:
+    synchronous:
+      method: any
+      number: 1     # at least 1 replica must confirm before commit
+```
+
+## What failover does
+
+If the primary becomes unhealthy, the operator:
+
+1. **Promotes** the most up-to-date replica to primary.
+2. **Repoints `truss-postgres-rw`** at the new primary automatically.
+3. **Rejoins** the old primary as a replica once it recovers.
+
+Because the [connection pooler](/guides/database/) and your app connect through the
+`-rw` Service (not a pod), they follow the new primary with **no config change**.
+Applications see a brief blip during promotion, then reconnect.
+
+:::note[Failover is tuned for safety, not speed]
+CloudNativePG waits to confirm the primary is genuinely unhealthy before promoting,
+and lets a gracefully-stopped primary drain first. So a clean shutdown can take
+longer to fail over than a hard crash. Tune `failoverDelay` / `switchoverDelay` and
+the shutdown timeout if you need faster promotion.
+:::
