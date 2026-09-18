@@ -163,6 +163,7 @@ why NeonDB's storage-layer approach solves that."
 | 6 | Scale-to-zero operator (idle-detect + suspend/resume) | TODO | 2 weekends | Neon |
 | 7 | Database branching (basic: TEMPLATE / ZFS snapshot) | LATER | 2-3 weekends | Neon |
 | , | Read-only topology/health dashboard | OPTIONAL | 1 weekend | observability |
+| , | **Public-chart HA path** , the shipped `charts/truss` runs a single Postgres StatefulSet (no HA). Backlog: add an optional CNPG-based Postgres to the chart, and/or first-class managed-Postgres (RDS/Cloud SQL/Neon) wiring docs | BACKLOG | 2 weekends | Supabase, all DB cos |
 
 **#1 (pgbouncer) shipped:** CNPG Pooler in transaction mode (20 backends / 1000
 client conns); truss-api routed through it; hit and fixed the classic
