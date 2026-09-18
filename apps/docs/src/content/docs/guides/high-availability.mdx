@@ -1,84 +1,100 @@
 ---
 title: High Availability
-description: Run Postgres with streaming replicas and automatic failover, and understand when it actually helps.
+description: Understand what the default deployment gives you, and how to run Postgres with replicas and automatic failover.
 ---
 
-Truss runs Postgres via the [CloudNativePG](https://cloudnative-pg.io) operator. A
-single instance is the default and is fine for most self-hosted setups. When you
-want redundancy, you turn on replicas and the operator gives you streaming
-replication plus automatic failover, no extra tooling.
+Truss talks to Postgres over a single `DATABASE_URL`. That means **HA is a property
+of the Postgres you point it at**, not of Truss itself, which is exactly what you
+want: use whatever database high-availability story you already trust.
 
-## The default is one instance
+## What the default deployment gives you
 
-```yaml
-# deploy/k8s/values/postgres.yaml
-cluster:
-  name: truss-postgres
-  instances: 1        # default: single primary, lightweight, runs anywhere
-```
+Both shipped deployments run a **single Postgres instance**:
 
-One instance keeps the footprint small (one PVC, one set of resources). It's the
-right default for a homelab, a single VPS, or any evaluation.
+- **Docker Compose** (`docker-compose.selfhosted.yml`) , one `postgres` container.
+- **Helm chart** (`charts/truss`) , one Postgres `StatefulSet`, `replicas: 1`.
 
-## Turning on HA
+This is deliberate: it runs anywhere, it's cheap, and it's the right default for a
+homelab, a single VPS, or an evaluation. It has **no failover**, if that Postgres
+goes down, Truss is down until it comes back. Take regular backups (see
+[Branching & Backups](/guides/branching/)).
 
-Set `instances` to 3 (odd numbers are conventional, for quorum-style promotion):
-
-```yaml
-cluster:
-  name: truss-postgres
-  instances: 3        # 1 primary + 2 streaming replicas + automatic failover
-```
-
-The operator creates the replicas with `pg_basebackup`, streams WAL to them, and
-manages three Services:
-
-| Service | Points at | Use for |
-|---|---|---|
-| `truss-postgres-rw` | current **primary** | writes (this is what `DATABASE_URL` uses) |
-| `truss-postgres-ro` | **replicas** only | read-only queries you want off the primary |
-| `truss-postgres-r`  | any instance | reads that don't care primary vs replica |
-
-:::caution[Replicas are not HA on a single node]
-On a single-node cluster all replicas land on the **same machine**, so if that node
-dies, every copy dies with it. You get the *failover mechanism* and read scaling,
-but **not** fault tolerance. Real HA needs `instances: 3` spread across **separate
-nodes / availability zones**.
+:::note
+Setting `replicas: 2` on the default StatefulSet does **not** give you HA , it's a
+plain StatefulSet, not a replication-aware operator. For real HA use one of the
+options below.
 :::
 
-## Async vs sync replicas
+## Option 1 , managed Postgres (recommended for most)
 
-By default replication is **asynchronous**: the primary commits without waiting for
-replicas. It's fast, but on a failover you can lose the last few transactions that
-hadn't reached the promoted replica yet (a small RPO window).
+The simplest path: don't self-manage HA at all. Point `DATABASE_URL` at a managed
+Postgres (Amazon RDS / Aurora, Cloud SQL, Neon, Supabase, Crunchy Bridge). They
+handle replication, automatic failover, backups, and PITR for you.
 
-For **zero data loss**, require a synchronous replica, the primary then waits for a
-replica to confirm each commit, trading a little write latency for RPO = 0:
-
-```yaml
-cluster:
-  instances: 3
-  postgresql:
-    synchronous:
-      method: any
-      number: 1     # at least 1 replica must confirm before commit
+```bash
+DATABASE_URL=postgres://user:pass@your-managed-host:5432/truss?sslmode=require
 ```
 
-## What failover does
+Nothing else in Truss changes. This is the least operational burden and the safest
+choice unless you specifically want to run the database yourself.
+
+## Option 2 , run Postgres under an operator (self-managed HA)
+
+If you want HA on your own Kubernetes cluster, run Postgres under a replication
+operator such as [CloudNativePG](https://cloudnative-pg.io) (CNPG) and point
+`DATABASE_URL` at the operator's read-write Service. CNPG gives you streaming
+replicas and **operator-driven automatic failover** with no extra tooling.
+
+```yaml
+# a CloudNativePG Cluster (NOT the Truss chart), e.g. instances: 3
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: truss-postgres
+spec:
+  instances: 3        # 1 primary + 2 streaming replicas
+```
+
+CNPG then manages three Services , `*-rw` (primary, use this in `DATABASE_URL`),
+`*-ro` (replicas), `*-r` (any). It also pairs cleanly with a PgBouncer `Pooler`
+(`type: rw`), which follows the primary automatically.
+
+### What failover does
 
 If the primary becomes unhealthy, the operator:
 
 1. **Promotes** the most up-to-date replica to primary.
-2. **Repoints `truss-postgres-rw`** at the new primary automatically.
+2. **Repoints the `-rw` Service** at the new primary automatically.
 3. **Rejoins** the old primary as a replica once it recovers.
 
-Because the [connection pooler](/guides/database/) and your app connect through the
-`-rw` Service (not a pod), they follow the new primary with **no config change**.
-Applications see a brief blip during promotion, then reconnect.
+Because Truss and any pooler connect through the `-rw` Service (not a pod), they
+follow the new primary with **no config change** , a brief blip during promotion,
+then reconnect.
+
+### Async vs sync replicas
+
+Replication is **asynchronous** by default: fast, but a failover can lose the last
+few transactions that hadn't reached the promoted replica (a small RPO window). For
+**zero data loss**, require a synchronous replica (trades a little write latency):
+
+```yaml
+spec:
+  instances: 3
+  postgresql:
+    synchronous:
+      method: any
+      number: 1     # at least one replica must confirm each commit
+```
+
+:::caution[Replicas on one node are not fault tolerance]
+Running all instances on a **single node** gives you the failover mechanism and read
+scaling, but not real HA , if the node dies, every copy dies with it. Real HA needs
+instances spread across **separate nodes / availability zones**.
+:::
 
 :::note[Failover is tuned for safety, not speed]
-CloudNativePG waits to confirm the primary is genuinely unhealthy before promoting,
-and lets a gracefully-stopped primary drain first. So a clean shutdown can take
-longer to fail over than a hard crash. Tune `failoverDelay` / `switchoverDelay` and
-the shutdown timeout if you need faster promotion.
+CNPG waits to confirm the primary is genuinely unhealthy before promoting, and lets
+a gracefully-stopped primary drain first, so a clean shutdown can take longer to
+fail over than a hard crash. Tune `failoverDelay` / `switchoverDelay` if you need
+faster promotion.
 :::
