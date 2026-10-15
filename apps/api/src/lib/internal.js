@@ -185,6 +185,21 @@ export function ensureInternalSchema() {
     create index if not exists idx_projects_org_id on truss_internal.projects(org_id);
 
     create index if not exists idx_projects_tenant_id on truss_internal.projects(tenant_id);
+
+    -- Tracks provisioned per-tenant databases (bootstrap is authoritative for self-host; mirrors db/migrations/*_tenant_databases).
+    create table if not exists truss_internal.tenant_databases (
+      id text primary key default gen_random_uuid()::text,
+      tenant_id text not null,
+      db_name text not null unique,
+      status text not null default 'provisioning' check (status in ('provisioning', 'active', 'suspended', 'deleted')),
+      schema_version integer not null default 1,
+      pg_size_bytes bigint default 0,
+      created_at timestamptz not null default now(),
+      last_health_check timestamptz
+    );
+    create index if not exists idx_tenant_databases_tenant_id on truss_internal.tenant_databases(tenant_id);
+    alter table truss_internal.projects add column if not exists db_name text;
+
     create index if not exists idx_audit_logs_tenant_id on truss_internal.audit_logs(tenant_id);
     create index if not exists idx_branches_tenant_id on truss_internal.branches(tenant_id);
     create index if not exists idx_webhooks_tenant_id on truss_internal.webhooks(tenant_id);

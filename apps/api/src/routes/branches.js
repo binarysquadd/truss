@@ -77,20 +77,22 @@ router.post("/api/branches", async (req, res) => {
     const parentResult = await customerPool.query(`select current_database() as db`);
     const parentDb = parentResult.rows[0].db;
 
-    // Terminate other connections to parent DB so TEMPLATE works
-    await customerPool.query(
-      `select pg_terminate_backend(pid) from pg_stat_activity
-       where datname = $1 and pid <> pg_backend_pid()`,
-      [parentDb]
-    );
-
-    // CREATE DATABASE ... TEMPLATE requires no other connections — use a fresh client
+    // CREATE DATABASE ... TEMPLATE requires the parent to have NO other connections. A plain
+    // pg_terminate_backend doesn't hold: our own pools reconnect immediately. So from a fresh
+    // client on the `postgres` db, block new connections to the parent, terminate the rest, then
+    // clone — and always re-allow connections in finally so the parent is never left locked.
     const connStr = getActiveDatabaseUrl().replace(/\/[^/?]+(\?|$)/, `/postgres$1`);
     const tempClient = new pg.Client(connStr);
     await tempClient.connect();
     try {
+      await tempClient.query(`ALTER DATABASE "${parentDb}" WITH ALLOW_CONNECTIONS false`);
+      await tempClient.query(
+        `select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()`,
+        [parentDb]
+      );
       await tempClient.query(`CREATE DATABASE "${branchDb}" TEMPLATE "${parentDb}"`);
     } finally {
+      await tempClient.query(`ALTER DATABASE "${parentDb}" WITH ALLOW_CONNECTIONS true`).catch(() => {});
       await tempClient.end();
     }
 

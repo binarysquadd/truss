@@ -12,6 +12,9 @@ RUN npm run build:docker
 # ── Stage 2: Runtime (no source) ──
 FROM node:22-alpine
 
+# postgresql-client: branch export/restore and backups shell out to pg_dump/psql.
+RUN apk add --no-cache postgresql16-client
+
 WORKDIR /app
 
 COPY apps/api/package.json ./package.json
