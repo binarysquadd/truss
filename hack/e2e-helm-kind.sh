@@ -41,7 +41,7 @@ PRELOAD=(
   otel/opentelemetry-collector-contrib:0.117.0 prom/prometheus:v3.1.0
   grafana/loki:3.3.2 grafana/tempo:2.7.0 grafana/grafana:11.5.1
   postgres:16-alpine oryd/kratos:v1.2.0 oryd/keto:v0.12.0-alpha.0 oryd/hydra:v2.2.0
-  oryd/oathkeeper:v0.40.7 minio/minio:RELEASE.2024-09-22T00-33-43Z
+  oryd/oathkeeper:v0.40.7 rustfs/rustfs:latest
   ghcr.io/open-feature/flagd:v0.11.1 valkey/valkey:8-alpine
 )
 arch_tar="$(mktemp -d)/img.tar"

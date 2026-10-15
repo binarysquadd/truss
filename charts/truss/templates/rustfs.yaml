@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: truss-rustfs
+spec:
+  selector: { app: truss-rustfs }
+  ports:
+    - { name: s3, port: 9000, targetPort: 9000 }
+    - { name: console, port: 9001, targetPort: 9001 }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: truss-rustfs
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: {{ .Values.rustfs.storage }} } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: truss-rustfs
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: truss-rustfs }
+  template:
+    metadata:
+      labels: { app: truss-rustfs }
+    spec:
+      containers:
+        - name: rustfs
+          image: {{ .Values.images.rustfs }}
+          # RustFS needs no server args; it serves /data set via RUSTFS_VOLUMES below.
+          # Minimal hardening: RustFS can run non-root, but writing to its PVC
+          # then needs a pod-level fsGroup matching the image's uid (varies by
+          # release). To avoid breaking PVC writes we keep just the conservative
+          # guards here; add `runAsNonRoot: true` + a `securityContext.fsGroup`
+          # at the pod spec once the image uid is confirmed.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - { name: RUSTFS_VOLUMES, value: "/data" }
+            - name: RUSTFS_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: storage-access-key } }
+            - name: RUSTFS_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: truss-secrets, key: storage-secret-key } }
+          ports: [{ containerPort: 9000 }, { containerPort: 9001 }]
+          readinessProbe: { exec: { command: ["/bin/sh", "-c", "nc -z localhost 9000"] }, initialDelaySeconds: 5, periodSeconds: 10 }
+          volumeMounts: [{ name: data, mountPath: /data }]
+          resources: {{- toYaml .Values.resources.small | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: truss-rustfs }

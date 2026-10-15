@@ -22,6 +22,6 @@ describe("Integrations status", () => {
     const authOk = res.data.auth.reachable === true || res.data.auth.admin.reachable === true;
     const storageOk = res.data.storage.s3.reachable === true || res.data.storage.console.reachable === true;
     assert(authOk, "Kratos should be reachable");
-    assert(storageOk, "MinIO should be reachable");
+    assert(storageOk, "RustFS should be reachable");
   });
 });

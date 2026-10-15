@@ -106,7 +106,7 @@ router.post("/api/projects/provision", async (req, res) => {
     const tenantShort = tenantId.replace(/-/g, "").slice(0, 12).toLowerCase();
     const bucketName = `t-${tenantShort}-${slug}`;
 
-    // Create MinIO bucket
+    // Create RustFS bucket
     try {
       const s3 = getS3Client();
       await s3.send(new CreateBucketCommand({ Bucket: bucketName }));
@@ -332,7 +332,7 @@ router.get("/api/admin/stats", adminMiddleware, async (req, res) => {
       }
     }
 
-    // --- Per-tenant storage sizes (MinIO buckets) ---
+    // --- Per-tenant storage sizes (RustFS buckets) ---
     let bucketSizes = {};
     try {
       const client = getS3Client();
@@ -346,7 +346,7 @@ router.get("/api/admin/stats", adminMiddleware, async (req, res) => {
         } while (token);
         bucketSizes[bucket.Name] = { size_bytes: total, object_count: objectCount };
       }
-    } catch { /* MinIO unavailable */ }
+    } catch { /* RustFS unavailable */ }
 
     // --- Per-tenant API key counts ---
     let perProjectKeys = {};
@@ -575,7 +575,7 @@ router.delete("/api/projects/:id", async (req, res) => {
     const targetPool = getCustomerPool(req);
     await targetPool.query(`DROP SCHEMA IF EXISTS ${safeSchema} CASCADE`);
 
-    // Delete MinIO bucket (empty it first)
+    // Delete RustFS bucket (empty it first)
     try {
       const s3 = getS3Client();
       let continuationToken;

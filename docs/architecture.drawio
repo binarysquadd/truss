@@ -41,7 +41,7 @@
         <mxCell id="oathkeeper" value="Ory Oathkeeper — API Gateway" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;fillColor=#f8fafc;strokeColor=#64748b;fontColor=#374151;fontSize=13;" vertex="1" parent="1">
           <mxGeometry x="712" y="372" width="416" height="46" as="geometry" />
         </mxCell>
-        <mxCell id="minio" value="MinIO — Storage" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;fillColor=#ecfdf5;strokeColor=#059669;fontColor=#047857;fontSize=13;" vertex="1" parent="1">
+        <mxCell id="rustfs" value="RustFS — Storage" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;fillColor=#ecfdf5;strokeColor=#059669;fontColor=#047857;fontSize=13;" vertex="1" parent="1">
           <mxGeometry x="712" y="430" width="416" height="46" as="geometry" />
         </mxCell>
         <mxCell id="flagd" value="flagd — Feature Flags" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;fillColor=#ecfeff;strokeColor=#128193;fontColor=#0e6b7b;fontSize=13;" vertex="1" parent="1">

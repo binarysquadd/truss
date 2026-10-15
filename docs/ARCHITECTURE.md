@@ -31,7 +31,7 @@
                     │  │  :4455   │ │  :5432     │      │
                     │  └──────────┘ └───────────┘      │
                     │  ┌───────────┐                    │
-                    │  │  MinIO    │                    │
+                    │  │  RustFS   │                    │
                     │  │  :9000    │                    │
                     │  └───────────┘                    │
                     └──────────────────────────────────┘
@@ -45,7 +45,7 @@
 | **Ory Keto** | Authorization / permissions (read :4466, write proxied) |
 | **Ory Hydra** | OAuth2 / OIDC (public :4444, admin :4445, `hydra` schema) |
 | **Ory Oathkeeper** | API Gateway (proxy :4455, admin :4456, stateless) |
-| **MinIO** | S3-compatible object storage (:9000) |
+| **RustFS** | S3-compatible object storage (:9000) |
 | **Valkey** | Redis-compatible cache / KV store (:6379, ephemeral by default) |
 | **Cloudflare Pages** | Static hosting for Dashboard, Admin, Docs, WWW |
 
@@ -158,10 +158,10 @@ PostgreSQL Instance (single server)
 \-- hydra                              <-- Hydra's own database (OAuth2 state)
 ```
 
-## Storage Layout (MinIO)
+## Storage Layout (RustFS)
 
 ```
-MinIO Instance (single server, S3-compatible)
+RustFS Instance (single server, S3-compatible)
 |
 +-- t-aabb-myapp-ab12/                 <-- Tenant A, Project "myapp" bucket
 |   +-- uploads/photo.jpg
@@ -220,7 +220,7 @@ getPoolForDatabase(db) // Generic pool factory with LRU eviction
 
 **Step 2 -- First Dashboard Load.** Session middleware validates with Kratos -> auto-INSERT tenant row + billing_config (plan: starter).
 
-**Step 3 -- Create First Project.** `POST /api/projects/provision` -> `CREATE DATABASE "truss_t_<12hex>"` with extensions -> create schema -> create MinIO bucket -> generate anon + service_role API keys -> persist to `truss_internal.projects`.
+**Step 3 -- Create First Project.** `POST /api/projects/provision` -> `CREATE DATABASE "truss_t_<12hex>"` with extensions -> create schema -> create RustFS bucket -> generate anon + service_role API keys -> persist to `truss_internal.projects`.
 
 **Step 4 -- Client API Calls.** End-user app sends `apikey` header -> `apiKeyAuth` resolves tenant -> query executes in tenant's isolated database.
 
@@ -238,7 +238,7 @@ getPoolForDatabase(db) // Generic pool factory with LRU eviction
 | Landing page | CF Pages | truss.binarysquad.org |
 | Admin | CF Pages | admin.truss.binarysquad.org |
 | Docs | CF Pages | docs.truss.binarysquad.org |
-| API + Ory stack + Postgres + MinIO | Coolify/Docker on Hetzner | api.truss.binarysquad.org |
+| API + Ory stack + Postgres + RustFS | Coolify/Docker on Hetzner | api.truss.binarysquad.org |
 
 Demo mode runs on the same API instance (`TRUSS_DEMO_MODE=true` or per-request `x-demo: true` header).
 
@@ -304,9 +304,9 @@ Ory sessions are database-backed -- any API instance can validate via Kratos `/s
 ### Phase 0: 2-VPS Split (when VPS 1 hits 70% sustained load)
 
 **VPS 1 (App tier):** Truss API, Ory Kratos/Keto/Hydra/Oathkeeper, Coolify.
-**VPS 2 (Data tier):** PostgreSQL, MinIO, PgBouncer (optional).
+**VPS 2 (Data tier):** PostgreSQL, RustFS, PgBouncer (optional).
 
-Migration: `pg_dump`/`pg_restore` for Postgres, `mc mirror` for MinIO, then update env vars (`DATABASE_URL`, `MINIO_S3_ENDPOINT`) to point at VPS 2 private IP. No code changes required.
+Migration: `pg_dump`/`pg_restore` for Postgres, `mc mirror` for RustFS, then update env vars (`DATABASE_URL`, `STORAGE_S3_ENDPOINT`) to point at VPS 2 private IP. No code changes required.
 
 If PgBouncer is added: one 5-line change in `buildPool()` to use pooled connection for queries and direct connection for migrations/DDL.
 
@@ -314,7 +314,7 @@ Load balancing via Cloudflare Load Balancing ($5/mo) with health checks on `/api
 
 ### Phase 1: Docker MVP (per-tenant provisioning)
 
-Single VPS, dockerode talking to Docker socket. Restate durable workflow provisions per-tenant: Docker network -> Postgres container -> MinIO bucket -> Kratos config -> Caddy route -> API keys. Saga pattern for rollback on failure.
+Single VPS, dockerode talking to Docker socket. Restate durable workflow provisions per-tenant: Docker network -> Postgres container -> RustFS bucket -> Kratos config -> Caddy route -> API keys. Saga pattern for rollback on failure.
 
 ### Phase 2: Terraform + Automated VPS (30-100 tenants)
 
@@ -327,9 +327,9 @@ Terraform for Hetzner VPS provisioning (2-3 servers). Cloud-init installs Docker
 | Infrastructure | K3s (lightweight K8s, ~512MB RAM) |
 | GitOps | Flux CD (auto-restores cluster from Git) |
 | Workflow engine | Restate |
-| Resource template | kro (one CRD provisions Postgres + MinIO + Kratos) |
+| Resource template | kro (one CRD provisions Postgres + RustFS + Kratos) |
 | Database operator | Zalando Postgres Operator |
-| Storage operator | MinIO Operator |
+| Storage operator | RustFS Operator |
 | Routing | Caddy |
 
 Full cluster recreate in ~4 minutes: `terraform apply` -> `k3sup install` -> `flux bootstrap` -> state restored from Git.
@@ -338,7 +338,7 @@ Full cluster recreate in ~4 minutes: `terraform apply` -> `k3sup install` -> `fl
 
 ### Database Replication Strategy
 
-- **0-50 tenants:** Single Postgres, daily `pg_dump` to MinIO, WAL archiving for PITR.
+- **0-50 tenants:** Single Postgres, daily `pg_dump` to RustFS, WAL archiving for PITR.
 - **50-200 tenants:** Primary-replica. Route read-only queries to replica via `getReadPool()`.
 - **200+ tenants:** Per-tenant Postgres instances. Shared management DB on dedicated instance. This is where K3s + Zalando Operator makes sense.
 

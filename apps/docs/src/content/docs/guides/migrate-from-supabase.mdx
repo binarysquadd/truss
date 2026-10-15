@@ -13,7 +13,7 @@ Truss is an open-source, self-hosted BaaS built on the same foundations as Supab
 |----------|-------|-------|
 | PostgreSQL | PostgreSQL | Direct compatibility. Extensions, RLS, functions all transfer. |
 | Supabase Auth (GoTrue) | Authentication (Ory Kratos) | Different API. User data must be migrated. |
-| Supabase Storage | Storage (MinIO) | Both S3-compatible. Files transfer via `aws s3 sync`. |
+| Supabase Storage | Storage (RustFS) | Both S3-compatible. Files transfer via `aws s3 sync`. |
 | Realtime | Realtime (LISTEN/NOTIFY) | Different client API, same PostgreSQL mechanism. |
 | Edge Functions (Deno) | Not built-in | Use webhooks, external functions, or your own serverless platform. |
 | Supabase JS Client | Truss Client API | Different SDK. See the [Client SDK](../api-reference/client-sdk/) docs. |
@@ -173,7 +173,7 @@ curl -X PUT ${KRATOS_ADMIN_URL}/admin/identities/{identity-id} \
 
 ## Step 3: Migrate Storage
 
-Both Supabase Storage and Truss Storage (MinIO) are S3-compatible. Use the AWS CLI to sync files.
+Both Supabase Storage and Truss Storage (RustFS) are S3-compatible. Use the AWS CLI to sync files.
 
 ### Configure AWS CLI for both services
 
@@ -183,10 +183,10 @@ export SUPABASE_S3_ENDPOINT="https://[ref].supabase.co/storage/v1/s3"
 export SUPABASE_ACCESS_KEY="your-supabase-access-key"
 export SUPABASE_SECRET_KEY="your-supabase-secret-key"
 
-# Truss MinIO credentials (from your .env or Truss dashboard > Storage)
+# Truss RustFS credentials (from your .env or Truss dashboard > Storage)
 export TRUSS_S3_ENDPOINT="http://your-truss-host:9000"
-export TRUSS_ACCESS_KEY="your-minio-access-key"
-export TRUSS_SECRET_KEY="your-minio-secret-key"
+export TRUSS_ACCESS_KEY="your-rustfs-access-key"
+export TRUSS_SECRET_KEY="your-rustfs-secret-key"
 ```
 
 ### Sync files
@@ -198,7 +198,7 @@ aws s3 sync \
   --endpoint-url "$SUPABASE_S3_ENDPOINT" \
   --profile supabase
 
-# Create the bucket in Truss MinIO
+# Create the bucket in Truss RustFS
 aws s3 mb s3://your-bucket \
   --endpoint-url "$TRUSS_S3_ENDPOINT" \
   --profile truss
@@ -218,8 +218,8 @@ aws_access_key_id = your-supabase-access-key
 aws_secret_access_key = your-supabase-secret-key
 
 [truss]
-aws_access_key_id = your-minio-access-key
-aws_secret_access_key = your-minio-secret-key
+aws_access_key_id = your-rustfs-access-key
+aws_secret_access_key = your-rustfs-secret-key
 ```
 
 ### Update storage references
@@ -353,7 +353,7 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ...
 DATABASE_URL=postgresql://postgres:password@your-truss-host:5432/truss
 TRUSS_API_URL=http://your-truss-host:8787
 TRUSS_API_KEY=your-truss-api-key
-MINIO_ENDPOINT=http://your-truss-host:9000
+STORAGE_S3_ENDPOINT=http://your-truss-host:9000
 ```
 
 ---

@@ -285,7 +285,7 @@ describe("Storage Upload Limits", () => {
         size: 200 * 1024 * 1024,
       },
     });
-    // 400 (size limit) or 403 (demo write protection) or 503 (MinIO not connected)
+    // 400 (size limit) or 403 (demo write protection) or 503 (RustFS not connected)
     assert(
       [400, 403, 503].includes(res.status),
       `Should reject 200MB upload, got ${res.status}`,

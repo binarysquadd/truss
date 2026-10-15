@@ -27,11 +27,11 @@ charts/truss/ — umbrella Helm chart (the whole stack, one install)
 
 ```bash
 git clone https://github.com/binarysquadd/truss && cd truss
-cp .env.example .env      # DATABASE_URL, KRATOS_*, KETO_*, MINIO_* — see the README
+cp .env.example .env      # DATABASE_URL, KRATOS_*, KETO_*, STORAGE_* — see the README
 make dev                  # api :8787 + dashboard :5173 + docs
 ```
 
-You need Postgres + Ory Kratos/Keto/Hydra + MinIO reachable. Don't hand-wire those --
+You need Postgres + Ory Kratos/Keto/Hydra + RustFS reachable. Don't hand-wire those --
 `docker compose -f docker-compose.selfhosted.yml up` (or the Helm chart) brings the whole
 cast up for you. See the README's quickstart.
 

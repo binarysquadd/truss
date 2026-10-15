@@ -3606,7 +3606,7 @@ export const openApiBase = {
         responses: {
           200: ok("Bucket list"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
       post: {
@@ -3622,7 +3622,7 @@ export const openApiBase = {
           200: ok("Bucket created"),
           400: err("Invalid bucket name or already exists"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -3638,7 +3638,7 @@ export const openApiBase = {
           200: ok("Bucket deleted"),
           400: err("Bucket not empty"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -3659,7 +3659,7 @@ export const openApiBase = {
         responses: {
           200: ok("Object list with common prefixes"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
       delete: {
@@ -3674,7 +3674,7 @@ export const openApiBase = {
         responses: {
           200: ok("Object deleted"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -3693,7 +3693,7 @@ export const openApiBase = {
         responses: {
           200: ok("Presigned upload URL"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -3712,7 +3712,7 @@ export const openApiBase = {
         responses: {
           200: ok("Presigned download URL"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -3731,7 +3731,7 @@ export const openApiBase = {
         responses: {
           200: ok("Folder created"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -3750,7 +3750,7 @@ export const openApiBase = {
         responses: {
           200: ok("Delete results"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -3769,7 +3769,7 @@ export const openApiBase = {
         responses: {
           200: ok("URL diagnostics results"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -3788,7 +3788,7 @@ export const openApiBase = {
         responses: {
           200: ok("Object uploaded"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -3806,7 +3806,7 @@ export const openApiBase = {
         responses: {
           200: ok("Object metadata"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
       patch: {
@@ -3822,7 +3822,7 @@ export const openApiBase = {
         responses: {
           200: ok("Metadata updated"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -3837,7 +3837,7 @@ export const openApiBase = {
         responses: {
           200: ok("Bucket policy"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
       put: {
@@ -3854,7 +3854,7 @@ export const openApiBase = {
           200: ok("Policy set"),
           400: err("Invalid policy"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -3869,7 +3869,7 @@ export const openApiBase = {
         responses: {
           200: ok("CORS config"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
       put: {
@@ -3885,7 +3885,7 @@ export const openApiBase = {
         responses: {
           200: ok("CORS config updated"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -3904,7 +3904,7 @@ export const openApiBase = {
         responses: {
           200: ok("Upload ID"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -3923,7 +3923,7 @@ export const openApiBase = {
         responses: {
           200: ok("Presigned part URL"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -3942,7 +3942,7 @@ export const openApiBase = {
         responses: {
           200: ok("Upload completed"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -3961,7 +3961,7 @@ export const openApiBase = {
         responses: {
           200: ok("Upload aborted"),
           401: noSession,
-          503: noService("MinIO"),
+          503: noService("RustFS"),
         },
       },
     },
@@ -4879,7 +4879,7 @@ export const openApiBase = {
       get: {
         tags: ["Management"],
         summary: "Integration status",
-        description: "Health check for all integrations: database, Kratos, Keto, Hydra, Oathkeeper, MinIO.",
+        description: "Health check for all integrations: database, Kratos, Keto, Hydra, Oathkeeper, RustFS.",
         security: [{ SessionAuth: [] }],
         responses: {
           200: ok("Integration health status"),

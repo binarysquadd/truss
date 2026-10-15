@@ -1138,7 +1138,7 @@ export function renderSettingsMain(s: any): React.JSX.Element | null {
         ].filter(Boolean),
       },
       {
-        name: "Storage", ok: storageOk, subtitle: "MinIO S3",
+        name: "Storage", ok: storageOk, subtitle: "RustFS S3",
         details: [
           integrationsStatus?.storage?.s3Endpoint ? { label: "S3 Endpoint", value: integrationsStatus.storage.s3Endpoint } : null,
           { label: "S3 API", value: integrationsStatus?.storage?.s3?.reachable ? "Connected" : "Unreachable" },

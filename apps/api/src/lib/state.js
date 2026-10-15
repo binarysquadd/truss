@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import pg from "pg";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import logger from "./logger.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,12 +31,12 @@ export const HYDRA_ADMIN_TOKEN = (process.env.HYDRA_ADMIN_TOKEN || "").trim();
 export const OATHKEEPER_PROXY_URL = (process.env.OATHKEEPER_PROXY_URL || "").trim();
 export const OATHKEEPER_ADMIN_URL = (process.env.OATHKEEPER_ADMIN_URL || "").trim();
 export const OATHKEEPER_ADMIN_TOKEN = (process.env.OATHKEEPER_ADMIN_TOKEN || "").trim();
-export const MINIO_CONSOLE_URL = (process.env.MINIO_CONSOLE_URL || "").trim();
-export const MINIO_S3_ENDPOINT = (process.env.MINIO_S3_ENDPOINT || "").trim();
-export const MINIO_ACCESS_KEY = (process.env.MINIO_ACCESS_KEY || "").trim();
-export const MINIO_SECRET_KEY = (process.env.MINIO_SECRET_KEY || "").trim();
-export const MINIO_REGION = (process.env.MINIO_REGION || "us-east-1").trim();
-export const MINIO_FORCE_PATH_STYLE = (process.env.MINIO_FORCE_PATH_STYLE || "true").trim().toLowerCase() !== "false";
+export const STORAGE_CONSOLE_URL = (process.env.STORAGE_CONSOLE_URL || "").trim();
+export const STORAGE_S3_ENDPOINT = (process.env.STORAGE_S3_ENDPOINT || "").trim();
+export const STORAGE_ACCESS_KEY = (process.env.STORAGE_ACCESS_KEY || "").trim();
+export const STORAGE_SECRET_KEY = (process.env.STORAGE_SECRET_KEY || "").trim();
+export const STORAGE_REGION = (process.env.STORAGE_REGION || "us-east-1").trim();
+export const STORAGE_FORCE_PATH_STYLE = (process.env.STORAGE_FORCE_PATH_STYLE || "true").trim().toLowerCase() !== "false";
 
 // Valkey (Redis-compatible cache / KV). VALKEY_URL wins if set; else built from host/port/password.
 export const VALKEY_HOST = (process.env.VALKEY_HOST || "localhost").trim();
@@ -56,8 +57,14 @@ export const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.met
 
 // ─── Mutable singletons ───
 
+// node-postgres emits 'error' on a pool when an idle backend dies (e.g. Postgres terminates it on DROP DATABASE); without a listener the process crashes.
+function withPoolErrorHandler(pool) {
+  pool.on("error", (err) => logger.warn({ module: "pg-pool", err: err.message }, "idle pool client error (recovered)"));
+  return pool;
+}
+
 let _pool = DATABASE_URL
-  ? new Pool({ connectionString: DATABASE_URL, query_timeout: QUERY_TIMEOUT_MS, statement_timeout: QUERY_TIMEOUT_MS, max: 20 })
+  ? withPoolErrorHandler(new Pool({ connectionString: DATABASE_URL, query_timeout: QUERY_TIMEOUT_MS, statement_timeout: QUERY_TIMEOUT_MS, max: 20 }))
   : null;
 let _activeDatabaseUrl = DATABASE_URL;
 let _s3Client = null;
@@ -70,7 +77,7 @@ export function getS3ClientInstance() { return _s3Client; }
 export function setS3ClientInstance(c) { _s3Client = c; }
 
 export function buildPool(connectionString) {
-  return new Pool({ connectionString, query_timeout: QUERY_TIMEOUT_MS, statement_timeout: QUERY_TIMEOUT_MS, max: 20 });
+  return withPoolErrorHandler(new Pool({ connectionString, query_timeout: QUERY_TIMEOUT_MS, statement_timeout: QUERY_TIMEOUT_MS, max: 20 }));
 }
 
 // Database connection pools — tenant DBs + branch DBs (LRU-bounded)

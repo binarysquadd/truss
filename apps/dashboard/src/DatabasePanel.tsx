@@ -3743,7 +3743,7 @@ export function renderDatabaseMain(s: any): React.JSX.Element | null {
                 <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
                   <p className="text-[10px] uppercase tracking-widest text-slate-500">Storage Size</p>
                   <p className="mt-1 text-lg font-bold text-slate-100">{formatBytes(consumption.storage_size_bytes)}</p>
-                  <p className="mt-0.5 text-[10px] text-slate-500">S3-compatible (MinIO)</p>
+                  <p className="mt-0.5 text-[10px] text-slate-500">S3-compatible (RustFS)</p>
                 </div>
                 <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
                   <p className="text-[10px] uppercase tracking-widest text-slate-500">Auth MAU</p>

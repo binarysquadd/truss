@@ -51,10 +51,10 @@ Open **http://localhost:3000** in your browser. Register your first user account
 | :5432  |  | :4433  |  | :4466  |
 +--------+  +--------+  +--------+
     |
-+---+---+
-| MinIO |
-| :9000 |
-+-------+
++---+----+
+| RustFS |
+| :9000  |
++--------+
 ```
 
 ## Default Credentials
@@ -62,7 +62,7 @@ Open **http://localhost:3000** in your browser. Register your first user account
 | Service   | Username / Access | Password     | URL                     |
 |-----------|-------------------|--------------|-------------------------|
 | Dashboard | (register first)  | (you choose) | http://localhost:3000    |
-| MinIO     | minioadmin        | minioadmin   | http://localhost:9001    |
+| RustFS    | STORAGE_ACCESS_KEY | STORAGE_SECRET_KEY | http://localhost:9001 (console, if exposed) |
 | Postgres  | truss             | truss        | localhost:5432 (not exposed by default) |
 
 ## Common Operations
@@ -98,11 +98,11 @@ docker compose -f docker-compose.selfhosted.yml exec postgres \
   pg_dump -U truss truss > backup_$(date +%Y%m%d).sql
 ```
 
-### Backup MinIO
+### Backup RustFS
 
 ```bash
-# Copy the entire MinIO data volume to a local directory
-docker cp $(docker compose -f docker-compose.selfhosted.yml ps -q minio):/data ./minio_backup
+# Copy the entire RustFS data volume to a local directory
+docker cp $(docker compose -f docker-compose.selfhosted.yml ps -q rustfs):/data ./rustfs_backup
 ```
 
 ### Restore Postgres

@@ -137,7 +137,7 @@ Write for developers who have shipped production systems. They can smell marketi
 
 **Rules:**
 - Use technical terms correctly. "RBAC" not "role-based security features." "HMAC-signed webhooks" not "secure webhooks."
-- Name real technologies: PostgreSQL, pgvector, Ory Kratos, MinIO, HNSW indexes. Developers trust specificity.
+- Name real technologies: PostgreSQL, pgvector, Ory Kratos, RustFS, HNSW indexes. Developers trust specificity.
 - Show, don't tell. List concrete capabilities rather than abstract benefits.
 - Never explain what a developer already knows. Don't define "PostgreSQL" or "OAuth2."
 
@@ -323,7 +323,7 @@ We state what the product does without hedging. We use correct terminology. We a
 | Ory Kratos | "Enterprise Auth" / "Authentication" |
 | Ory Keto | "Fine-Grained Permissions" / "Authorization" |
 | Ory Hydra | "OAuth2 / OpenID Connect" |
-| MinIO | "S3 Object Storage" |
+| RustFS | "S3 Object Storage" |
 | pgvector | "pgvector" (lowercase, as the extension is named) |
 
 **Exception:** FAQ answers use technical names for SEO (developers search for "Ory Kratos dashboard").

@@ -97,7 +97,7 @@ describe("Vectors Module", () => {
 describe("Storage Module", () => {
   it("GET /api/storage/buckets — returns buckets or service error", async () => {
     const res = await demoApi("/api/storage/buckets");
-    // 200 if MinIO connected, 503 if not — but never 500
+    // 200 if RustFS connected, 503 if not — but never 500
     assert(res.status === 200 || res.status === 503 || res.status === 400, `Buckets: expected 200/503, got ${res.status}`);
   });
 });

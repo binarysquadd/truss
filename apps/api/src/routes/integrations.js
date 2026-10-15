@@ -1,7 +1,7 @@
 import { Router } from "express";
 import {
   KRATOS_PUBLIC_URL, KRATOS_ADMIN_URL, KRATOS_ADMIN_TOKEN,
-  MINIO_S3_ENDPOINT, MINIO_CONSOLE_URL, MINIO_ACCESS_KEY, MINIO_SECRET_KEY,
+  STORAGE_S3_ENDPOINT, STORAGE_CONSOLE_URL, STORAGE_ACCESS_KEY, STORAGE_SECRET_KEY,
 } from "../lib/state.js";
 
 export const router = Router();
@@ -27,14 +27,14 @@ router.get("/api/integrations/status", async (_req, res) => {
 
   const authConfigured = Boolean(KRATOS_PUBLIC_URL);
   const adminConfigured = Boolean(KRATOS_ADMIN_URL);
-  const s3Configured = Boolean(MINIO_S3_ENDPOINT);
-  const consoleConfigured = Boolean(MINIO_CONSOLE_URL);
+  const s3Configured = Boolean(STORAGE_S3_ENDPOINT);
+  const consoleConfigured = Boolean(STORAGE_CONSOLE_URL);
 
   const [authPublic, authAdmin, s3, console] = await Promise.all([
     authConfigured ? probe(`${KRATOS_PUBLIC_URL}/health/ready`) : { reachable: false, message: "not configured" },
     adminConfigured ? probe(`${KRATOS_ADMIN_URL}/admin/health/ready`, KRATOS_ADMIN_TOKEN ? { authorization: `Bearer ${KRATOS_ADMIN_TOKEN}` } : {}) : { reachable: false, message: "not configured" },
-    s3Configured ? probe(`${MINIO_S3_ENDPOINT}/minio/health/live`) : { reachable: false, message: "not configured" },
-    consoleConfigured ? probe(MINIO_CONSOLE_URL) : { reachable: false, message: "not configured" },
+    s3Configured ? probe(`${STORAGE_S3_ENDPOINT}/health`) : { reachable: false, message: "not configured" },
+    consoleConfigured ? probe(STORAGE_CONSOLE_URL) : { reachable: false, message: "not configured" },
   ]);
 
   const result = {
@@ -55,10 +55,10 @@ router.get("/api/integrations/status", async (_req, res) => {
       },
     },
     storage: {
-      provider: "MinIO",
-      consoleUrl: MINIO_CONSOLE_URL || null,
-      s3Endpoint: MINIO_S3_ENDPOINT || null,
-      hasCredentials: Boolean(MINIO_ACCESS_KEY && MINIO_SECRET_KEY),
+      provider: "RustFS",
+      consoleUrl: STORAGE_CONSOLE_URL || null,
+      s3Endpoint: STORAGE_S3_ENDPOINT || null,
+      hasCredentials: Boolean(STORAGE_ACCESS_KEY && STORAGE_SECRET_KEY),
       console: {
         configured: consoleConfigured,
         reachable: console.reachable,

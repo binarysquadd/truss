@@ -1,28 +1,28 @@
 import { S3Client } from "@aws-sdk/client-s3";
 import {
-  MINIO_S3_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY,
-  MINIO_REGION, MINIO_FORCE_PATH_STYLE,
+  STORAGE_S3_ENDPOINT, STORAGE_ACCESS_KEY, STORAGE_SECRET_KEY,
+  STORAGE_REGION, STORAGE_FORCE_PATH_STYLE,
   getS3ClientInstance, setS3ClientInstance,
 } from "./state.js";
 
 export function getS3BaseUrl() {
-  if (!MINIO_S3_ENDPOINT) return "";
-  if (/^https?:\/\//i.test(MINIO_S3_ENDPOINT)) return MINIO_S3_ENDPOINT;
-  return `http://${MINIO_S3_ENDPOINT}`;
+  if (!STORAGE_S3_ENDPOINT) return "";
+  if (/^https?:\/\//i.test(STORAGE_S3_ENDPOINT)) return STORAGE_S3_ENDPOINT;
+  return `http://${STORAGE_S3_ENDPOINT}`;
 }
 
 export function getS3Client() {
   const endpoint = getS3BaseUrl();
-  if (!endpoint || !MINIO_ACCESS_KEY || !MINIO_SECRET_KEY) {
-    throw new Error("Storage is not configured. Set MINIO_S3_ENDPOINT, MINIO_ACCESS_KEY, and MINIO_SECRET_KEY.");
+  if (!endpoint || !STORAGE_ACCESS_KEY || !STORAGE_SECRET_KEY) {
+    throw new Error("Storage is not configured. Set STORAGE_S3_ENDPOINT, STORAGE_ACCESS_KEY, and STORAGE_SECRET_KEY.");
   }
   const existing = getS3ClientInstance();
   if (existing) return existing;
   const client = new S3Client({
-    region: MINIO_REGION || "us-east-1",
+    region: STORAGE_REGION || "us-east-1",
     endpoint,
-    forcePathStyle: MINIO_FORCE_PATH_STYLE,
-    credentials: { accessKeyId: MINIO_ACCESS_KEY, secretAccessKey: MINIO_SECRET_KEY },
+    forcePathStyle: STORAGE_FORCE_PATH_STYLE,
+    credentials: { accessKeyId: STORAGE_ACCESS_KEY, secretAccessKey: STORAGE_SECRET_KEY },
   });
   setS3ClientInstance(client);
   return client;

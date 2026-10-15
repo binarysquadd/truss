@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is Truss?
 
-Truss is an open-source BaaS (Backend-as-a-Service) console for self-hosters. It provides a unified dashboard for Postgres (SQL workbench with Monaco editor), Ory Kratos (auth/identity), Ory Keto (authorization/RBAC), and MinIO (S3-compatible storage). Features include pgvector, full-text search, webhooks, realtime subscriptions, database branching, backups/PITR, and a client API surface.
+Truss is an open-source BaaS (Backend-as-a-Service) console for self-hosters. It provides a unified dashboard for Postgres (SQL workbench with Monaco editor), Ory Kratos (auth/identity), Ory Keto (authorization/RBAC), and RustFS (S3-compatible storage). Features include pgvector, full-text search, webhooks, realtime subscriptions, database branching, backups/PITR, and a client API surface.
 
 ## Commands
 
@@ -160,7 +160,7 @@ Both themes defined in `apps/dashboard/src/editorConfig.ts` — `truss-dark` and
 
 ## Environment
 
-Requires `.env` (copy from `.env.example`). Key vars: `DATABASE_URL`, `KRATOS_*` (auth), `KETO_*` (authz), `MINIO_*` (storage). The SQL workbench is read-only by default (SELECT/WITH/EXPLAIN only — mutations are blocked server-side).
+Requires `.env` (copy from `.env.example`). Key vars: `DATABASE_URL`, `KRATOS_*` (auth), `KETO_*` (authz), `STORAGE_*` (storage). The SQL workbench is read-only by default (SELECT/WITH/EXPLAIN only — mutations are blocked server-side).
 
 ## Icon Design Language
 
@@ -174,7 +174,7 @@ All icons use `@phosphor-icons/react` with these rules:
 
 ## Naming Standard — Domain vs Technical Names
 
-The app wraps multiple open-source tools (Ory Kratos, Ory Keto, Ory Hydra, MinIO, pgvector, etc.). User-facing labels must use **domain names** (what the feature does), not **technical names** (what tool powers it). Technical names are reserved for developer/admin contexts.
+The app wraps multiple open-source tools (Ory Kratos, Ory Keto, Ory Hydra, RustFS, pgvector, etc.). User-facing labels must use **domain names** (what the feature does), not **technical names** (what tool powers it). Technical names are reserved for developer/admin contexts.
 
 | Context | Rule | Examples |
 |---------|------|---------|
@@ -183,17 +183,17 @@ The app wraps multiple open-source tools (Ory Kratos, Ory Keto, Ory Hydra, MinIO
 | **Home page health indicators** | Domain name | "Auth", "Permissions", "OAuth2", "Storage", "Database" |
 | **Panel titles** | Domain name as primary heading | "OAuth2 / OpenID Connect", "Authorization Overview" |
 | **Panel status/subtitle** | Technical name OK as secondary detail | "Powered by Ory Keto", "Provider: Ory Kratos" |
-| **SDK snippets & docs** | Technical names required — devs need them | "Ory Kratos", "Ory Keto", "MinIO S3 SDK" |
-| **Settings/config panels** | Technical names OK — admin context | "File Storage (MinIO)", "SMTP (used by Ory Kratos)" |
+| **SDK snippets & docs** | Technical names required — devs need them | "Ory Kratos", "Ory Keto", "RustFS S3 SDK" |
+| **Settings/config panels** | Technical names OK — admin context | "File Storage (RustFS)", "SMTP (used by Ory Kratos)" |
 | **Server errors/API** | Technical names OK — debugging context | "KETO_READ_URL not configured" |
-| **Code internals** | Technical shorthand, no restrictions | `kratos`, `keto`, `hydra`, `minio` |
+| **Code internals** | Technical shorthand, no restrictions | `kratos`, `keto`, `hydra`, `rustfs` |
 
 **Service mapping:**
 - Ory Kratos → "Authentication" / "Auth"
 - Ory Keto → "Authorization" / "Permissions"
 - Ory Hydra → "OAuth2" / "OAuth2 / OIDC"
 - Ory Oathkeeper → "API Gateway"
-- MinIO → "Storage"
+- RustFS → "Storage"
 - PostgreSQL → "Database"
 - pgvector → "Vectors" (sub-view of Database)
 - pg_cron → "Cron Jobs" (sub-view of Database)

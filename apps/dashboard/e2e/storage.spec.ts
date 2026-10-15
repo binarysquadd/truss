@@ -3,7 +3,7 @@ import { loadDashboard, apiCall, apiCallNoCsrf } from "./helpers";
 
 const BUCKET_NAME = `e2e-bucket-${Date.now()}`;
 
-/** 500/502/503 mean the API reached but MinIO is unavailable locally — acceptable.
+/** 500/502/503 mean the API reached but RustFS is unavailable locally — acceptable.
  *  403 can also mean quota/ownership rejection (not just CSRF), so we accept it for mutations. */
 const ACCEPTABLE_ERRORS = [400, 403, 500, 502, 503];
 

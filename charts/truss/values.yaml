@@ -22,7 +22,7 @@ images:
   keto: oryd/keto:v0.12.0-alpha.0
   hydra: oryd/hydra:v2.2.0
   oathkeeper: oryd/oathkeeper:v0.40.7
-  minio: minio/minio:RELEASE.2024-09-22T00-33-43Z   # pin to a real digest/tag before release
+  rustfs: rustfs/rustfs:latest   # pin to a real digest/tag before release
   flagd: ghcr.io/open-feature/flagd:v0.11.1
   valkey: valkey/valkey:8-alpine
   pullPolicy: IfNotPresent
@@ -33,7 +33,7 @@ images:
 #   helm install truss ./charts/truss \
 #     --set secrets.dbPassword=$(openssl rand -hex 16) \
 #     --set secrets.encryptionKey=$(openssl rand -hex 32) \
-#     --set secrets.minioSecretKey=$(openssl rand -hex 24) \
+#     --set secrets.storageSecretKey=$(openssl rand -hex 24) \
 #     --set secrets.kratosCookieSecret=$(openssl rand -hex 16) \
 #     --set secrets.kratosCipherSecret=$(openssl rand -hex 16)
 # Only `encryptionKey` has a runtime guard; the others will silently deploy with
@@ -45,8 +45,8 @@ images:
 secrets:
   dbPassword: ""
   encryptionKey: ""
-  minioAccessKey: ""
-  minioSecretKey: ""
+  storageAccessKey: ""
+  storageSecretKey: ""
   kratosCookieSecret: ""
   kratosCipherSecret: ""
   hydraSystemSecret: ""
@@ -54,7 +54,7 @@ secrets:
 
 postgres:
   storage: 5Gi
-minio:
+rustfs:
   storage: 10Gi
   bucket: truss
 

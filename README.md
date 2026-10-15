@@ -10,7 +10,7 @@ Supabase/Appwrite-style backend you fully own.
 > multi-tenant **Truss Cloud** (provisioning, metering, billing) is a separate hosted service.
 
 <p align="center">
-  <img alt="Truss architecture: browser → dashboard → API → backing services (Postgres, Ory Kratos/Keto/Hydra/Oathkeeper, MinIO, Valkey, flagd)" src="docs/architecture.png" width="820">
+  <img alt="Truss architecture: browser → dashboard → API → backing services (Postgres, Ory Kratos/Keto/Hydra/Oathkeeper, RustFS, Valkey, flagd)" src="docs/architecture.png" width="820">
 </p>
 
 ## What's inside
@@ -19,14 +19,14 @@ Supabase/Appwrite-style backend you fully own.
 - **Authentication** — email/password, magic links, social login, MFA (Ory Kratos).
 - **Authorization** — fine-grained, relation-based permissions / RBAC (Ory Keto).
 - **OAuth2 / OIDC** — be your own identity provider (Ory Hydra).
-- **Storage** — S3-compatible buckets, presigned up/downloads (MinIO).
+- **Storage** — S3-compatible buckets, presigned up/downloads (RustFS).
 - **Cache / KV** — Redis-compatible in-memory cache, sessions, rate-limit counters (Valkey).
 - **Plus** — realtime subscriptions, webhooks, database branching, backups/PITR, a client API surface, feature flags.
 - **MCP server** — operate your instance from an AI agent (Claude Code / Desktop, Cursor) over the Model Context Protocol. See [`apps/mcp`](apps/mcp/).
 
 ## Quickstart (self-host)
 
-The whole stack — Postgres, Kratos (auth), Keto (authz), MinIO (storage), Valkey (cache),
+The whole stack — Postgres, Kratos (auth), Keto (authz), RustFS (storage), Valkey (cache),
 flagd, the API, and the dashboard — comes up from one command. **Three supported ways to run
 Truss**, all off the same images (latest release: **v0.3.0**):
 
@@ -84,7 +84,7 @@ front it with TLS. Full deployment guide: [docs](apps/docs) → **Getting Starte
 
 ```bash
 npm install
-cp .env.example .env        # DATABASE_URL, KRATOS_*, KETO_*, MINIO_* (see the file)
+cp .env.example .env        # DATABASE_URL, KRATOS_*, KETO_*, STORAGE_* (see the file)
 make dev                    # api :8787 + dashboard :5173 + docs
 ```
 

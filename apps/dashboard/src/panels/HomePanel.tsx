@@ -834,7 +834,7 @@ export function renderHomeMain(_s: any): React.ReactNode {
             { key: "database", label: "Database", desc: "Postgres — SQL, branching, backups, PITR", icon: <Database size={16} weight="regular" /> },
             { key: "authn", label: "Authentication", desc: "Ory Kratos — users, sessions, social login", icon: <UserList size={16} weight="regular" /> },
             { key: "authz", label: "Permissions", desc: "Ory Keto — permissions, roles, RBAC", icon: <ShieldCheck size={16} weight="regular" /> },
-            { key: "storage", label: "Storage", desc: "MinIO — S3-compatible file storage", icon: <PaintBucket size={16} weight="regular" /> },
+            { key: "storage", label: "Storage", desc: "RustFS — S3-compatible file storage", icon: <PaintBucket size={16} weight="regular" /> },
             { key: "edge", label: "API", desc: "SQL-over-HTTP, REST API, serverless queries", icon: <Lightning size={16} weight="regular" /> },
             { key: "realtime", label: "Realtime", desc: "WAL-based WebSocket subscriptions", icon: <Broadcast size={16} weight="regular" /> },
             { key: "search", label: "Full-Text Search", desc: "Postgres FTS — tsvector, ranking, highlights", icon: <MagnifyingGlass size={16} weight="regular" /> },

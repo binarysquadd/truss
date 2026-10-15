@@ -44,8 +44,8 @@ else
 # ENCRYPTION_KEY in particular is unrecoverable: lose it and saved connection
 # passwords cannot be decrypted.
 DB_PASSWORD=$(gen 16)
-MINIO_ACCESS_KEY=truss-$(gen 6)
-MINIO_SECRET_KEY=$(gen 20)
+STORAGE_ACCESS_KEY=truss-$(gen 6)
+STORAGE_SECRET_KEY=$(gen 20)
 VALKEY_PASSWORD=$(gen 16)
 ENCRYPTION_KEY=$(gen 32)
 KRATOS_COOKIE_SECRET=$(gen 16)

@@ -91,18 +91,18 @@ Required for the API gateway / reverse proxy features.
 | `OATHKEEPER_ADMIN_URL` | Oathkeeper admin API | `http://localhost:4456` |
 | `OATHKEEPER_ADMIN_TOKEN` | Bearer token for the Oathkeeper admin proxy | (none) |
 
-## Storage (MinIO / S3)
+## Storage (RustFS / S3)
 
 Required for file storage features.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `MINIO_S3_ENDPOINT` | S3-compatible endpoint URL | `http://localhost:9000` |
-| `MINIO_CONSOLE_URL` | MinIO web console URL | `http://localhost:9001` |
-| `MINIO_ACCESS_KEY` | S3 access key | `minioadmin` |
-| `MINIO_SECRET_KEY` | S3 secret key | `minioadmin` |
-| `MINIO_REGION` | S3 region | `us-east-1` |
-| `MINIO_FORCE_PATH_STYLE` | Use path-style S3 URLs (required for MinIO) | `true` |
+| `STORAGE_S3_ENDPOINT` | S3-compatible endpoint URL | `http://localhost:9000` |
+| `STORAGE_CONSOLE_URL` | RustFS web console URL | `http://localhost:9001` |
+| `STORAGE_ACCESS_KEY` | S3 access key | `rustfsadmin` |
+| `STORAGE_SECRET_KEY` | S3 secret key | `rustfsadmin` |
+| `STORAGE_REGION` | S3 region | `us-east-1` |
+| `STORAGE_FORCE_PATH_STYLE` | Use path-style S3 URLs (required for RustFS) | `true` |
 
 ## Cache / KV (Valkey)
 

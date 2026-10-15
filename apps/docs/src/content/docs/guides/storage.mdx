@@ -3,19 +3,19 @@ title: Storage
 description: S3-compatible file storage with presigned uploads and downloads.
 ---
 
-Truss provides S3-compatible file storage powered by MinIO. The dashboard gives you a file browser with drag-and-drop uploads. The API provides presigned URLs for direct client uploads and downloads.
+Truss provides S3-compatible file storage powered by RustFS. The dashboard gives you a file browser with drag-and-drop uploads. The API provides presigned URLs for direct client uploads and downloads.
 
 ## Setup
 
 Set these environment variables in `apps/api/.env`:
 
 ```env
-MINIO_S3_ENDPOINT=http://localhost:9000
-MINIO_CONSOLE_URL=http://localhost:9001
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=minioadmin
-MINIO_REGION=us-east-1
-MINIO_FORCE_PATH_STYLE=true
+STORAGE_S3_ENDPOINT=http://localhost:9000
+STORAGE_CONSOLE_URL=http://localhost:9001
+STORAGE_ACCESS_KEY=rustfsadmin
+STORAGE_SECRET_KEY=rustfsadmin
+STORAGE_REGION=us-east-1
+STORAGE_FORCE_PATH_STYLE=true
 ```
 
 ## Buckets

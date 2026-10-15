@@ -16,10 +16,10 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getS3Client, isValidBucketName, parseStorageError, getS3BaseUrl } from "../lib/s3.js";
 import {
-  MINIO_CONSOLE_URL,
-  MINIO_REGION,
-  MINIO_FORCE_PATH_STYLE,
-  MINIO_S3_ENDPOINT,
+  STORAGE_CONSOLE_URL,
+  STORAGE_REGION,
+  STORAGE_FORCE_PATH_STYLE,
+  STORAGE_S3_ENDPOINT,
   getPool,
 } from "../lib/state.js";
 import { ensureInternalSchema, upsertSettingsKey } from "../lib/internal.js";
@@ -71,8 +71,8 @@ router.get("/api/storage/buckets", async (_req, res) => {
       buckets,
       count: buckets.length,
       endpoint: getS3BaseUrl(),
-      region: MINIO_REGION || "us-east-1",
-      forcePathStyle: MINIO_FORCE_PATH_STYLE,
+      region: STORAGE_REGION || "us-east-1",
+      forcePathStyle: STORAGE_FORCE_PATH_STYLE,
     });
   } catch (error) {
     log.error({ err: parseStorageError(error, "Failed to load buckets.") }, "failed to list buckets");
@@ -378,8 +378,8 @@ router.post("/api/storage/buckets/:name/objects/url-diagnostics", async (req, re
     const command = new GetObjectCommand({ Bucket: name, Key: key });
     const url = await getSignedUrl(client, command, { expiresIn });
     const parsed = new URL(url);
-    const configuredEndpoint = MINIO_S3_ENDPOINT
-      ? new URL(MINIO_S3_ENDPOINT.startsWith("http") ? MINIO_S3_ENDPOINT : `https://${MINIO_S3_ENDPOINT}`)
+    const configuredEndpoint = STORAGE_S3_ENDPOINT
+      ? new URL(STORAGE_S3_ENDPOINT.startsWith("http") ? STORAGE_S3_ENDPOINT : `https://${STORAGE_S3_ENDPOINT}`)
       : null;
     const hostMatch = configuredEndpoint ? parsed.hostname === configuredEndpoint.hostname : null;
     const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
@@ -394,7 +394,7 @@ router.post("/api/storage/buckets/:name/objects/url-diagnostics", async (req, re
       hostMatch,
       curlCommand: `curl -o "${key.split("/").pop()}" "${url}"`,
       warnings: [
-        ...(!hostMatch && hostMatch !== null ? [`Host mismatch: signed URL uses ${parsed.hostname} but MINIO_S3_ENDPOINT is ${configuredEndpoint?.hostname}. Browser uploads will fail.`] : []),
+        ...(!hostMatch && hostMatch !== null ? [`Host mismatch: signed URL uses ${parsed.hostname} but STORAGE_S3_ENDPOINT is ${configuredEndpoint?.hostname}. Browser uploads will fail.`] : []),
         ...(parsed.protocol === "http:" ? ["URL uses HTTP. Browsers may block mixed-content requests from HTTPS pages."] : []),
       ],
     });

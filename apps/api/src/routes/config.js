@@ -1252,7 +1252,7 @@ const s3 = new S3Client({
     accessKeyId: "YOUR_ACCESS_KEY",
     secretAccessKey: "YOUR_SECRET_KEY",
   },
-  forcePathStyle: true, // Required for MinIO
+  forcePathStyle: true, // Required for RustFS
 })
 
 // Upload a file
@@ -1446,13 +1446,15 @@ uploadReq, _ := presigner.PresignPutObject(ctx, &s3.PutObjectInput{
     Key:    aws.String("uploads/new-file.pdf"),
 }, s3.WithPresignExpires(time.Hour))
 fmt.Println("Upload URL:", uploadReq.URL)`,
-      curl: `# MinIO client generates presigned URLs
-# Install: pip install minio or use mc (MinIO Client)
+      curl: `# Generate presigned URLs with the S3-compatible AWS CLI
+# Install: pip install awscli
 
-# Using mc CLI:
-mc alias set myminio {{s3Url}} YOUR_ACCESS_KEY YOUR_SECRET_KEY
-mc share download myminio/my-bucket/uploads/report.pdf --expire=1h
-mc share upload myminio/my-bucket/uploads/ --expire=1h`,
+# Configure once (points the CLI at RustFS):
+export AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY
+export AWS_SECRET_ACCESS_KEY=YOUR_SECRET_KEY
+
+# Presigned download URL (valid 1h):
+aws --endpoint-url {{s3Url}} s3 presign s3://my-bucket/uploads/report.pdf --expires-in 3600`,
     },
   },
   bucket: {

@@ -68,7 +68,7 @@ describe("Demo Mode — Read Operations", () => {
 
   it("GET /api/storage/buckets — returns bucket list", async () => {
     const res = await demoApi("/api/storage/buckets");
-    // May return empty list if MinIO not connected, but shouldn't 500
+    // May return empty list if RustFS not connected, but shouldn't 500
     assert(res.status === 200 || res.status === 503, `Buckets should return 200 or 503, got ${res.status}`);
   });
 

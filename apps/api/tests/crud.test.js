@@ -26,7 +26,7 @@ describe("Storage CRUD", () => {
       method: "POST",
       json: { name: `smoke-test-${Date.now()}` },
     });
-    // 403 in demo, 200 in dev (if MinIO connected), 503 if MinIO down
+    // 403 in demo, 200 in dev (if RustFS connected), 503 if RustFS down
     assert([200, 201, 403, 503].includes(res.status), `Expected 200/201/403/503, got ${res.status}`);
   });
 
