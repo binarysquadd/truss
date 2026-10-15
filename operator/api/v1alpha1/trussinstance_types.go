@@ -45,9 +45,9 @@ type TrussInstanceSpec struct {
 	// +optional
 	Components Components `json:"components,omitempty"`
 
-	// dependencies wires Truss to its backing services. In v1 every dependency
-	// is "bring your own" (an existing Secret/endpoint); operator-managed
-	// dependencies (CloudNativePG, MinIO operator) are a later phase.
+	// dependencies wires Truss to its backing services. Each is "bring your own"
+	// (an existing Secret/endpoint) by default; Postgres additionally supports
+	// operator-managed mode (a CloudNativePG cluster the operator provisions).
 	// +optional
 	Dependencies Dependencies `json:"dependencies,omitempty"`
 
@@ -66,6 +66,42 @@ type TrussInstanceSpec struct {
 	// observability wires the deployed instance for metrics/traces/logs.
 	// +optional
 	Observability ObservabilitySpec `json:"observability,omitempty"`
+
+	// backup configures scheduled backups + point-in-time recovery for
+	// operator-managed Postgres (requires dependencies.postgres.mode = "managed").
+	// +optional
+	Backup BackupSpec `json:"backup,omitempty"`
+}
+
+// BackupSpec configures CloudNativePG scheduled backups + PITR for managed Postgres.
+type BackupSpec struct {
+	// enabled turns on WAL archiving + scheduled base backups to the object store.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// schedule is a 6-field (seconds-first) cron for the base backup.
+	// Defaults to "0 0 2 * * *" (02:00 daily).
+	// +optional
+	Schedule string `json:"schedule,omitempty"`
+
+	// retentionPolicy is how long to keep backups (e.g. "30d"). Empty keeps all.
+	// +optional
+	RetentionPolicy string `json:"retentionPolicy,omitempty"`
+
+	// destinationPath is the object-store prefix for backups + WAL
+	// (e.g. "s3://my-bucket/truss"). Required when enabled.
+	// +optional
+	DestinationPath string `json:"destinationPath,omitempty"`
+
+	// endpointURL overrides the S3 endpoint for non-AWS object stores
+	// (e.g. an in-cluster RustFS/MinIO). Empty = AWS S3.
+	// +optional
+	EndpointURL string `json:"endpointURL,omitempty"`
+
+	// existingSecret holds the object-store credentials under keys ACCESS_KEY_ID
+	// and SECRET_ACCESS_KEY. Required when enabled.
+	// +optional
+	ExistingSecret string `json:"existingSecret,omitempty"`
 }
 
 // ObservabilitySpec controls how the operator makes the deployed Truss observable.
@@ -124,7 +160,9 @@ type ComponentSpec struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.mode) || self.mode != 'byo' || (has(self.existingSecret) && size(self.existingSecret) > 0)",message="mode 'byo' requires existingSecret"
 type DepSpec struct {
 	// mode selects whether Truss consumes an existing dependency ("byo") or the
-	// operator provisions one ("managed"). v1 supports "byo".
+	// operator provisions one ("managed"). Postgres managed = a CloudNativePG
+	// cluster; storage/cache/flags managed = RustFS/Valkey/flagd workloads the
+	// operator reconciles. Ory is "byo" only (no upstream operator).
 	// +kubebuilder:validation:Enum=byo;managed
 	// +optional
 	Mode string `json:"mode,omitempty"`
@@ -170,7 +208,7 @@ type Dependencies struct {
 	// +optional
 	Ory OryDeps `json:"ory,omitempty"`
 
-	// storage is the S3-compatible object store (MinIO).
+	// storage is the S3-compatible object store (RustFS).
 	// +optional
 	Storage DepSpec `json:"storage,omitempty"`
 

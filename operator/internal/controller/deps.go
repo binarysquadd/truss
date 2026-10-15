@@ -38,26 +38,39 @@ type depResult struct {
 // controller gates on dependency readiness so the app never starts against a
 // missing database or secret.
 //
-// v1 checks referenced Secrets exist (and Postgres carries a "database-url" key).
 // A dependency left unset (empty mode) is "not managed here" and is skipped.
-// Managed mode (operator-provisioned CNPG/MinIO) is a later phase.
+// Postgres supports both modes: "byo" checks the referenced Secret carries a
+// "database-url" key; "managed" provisions and gates on a CloudNativePG cluster
+// (see ensureManagedPostgres). Storage/cache/flags are byo-only in v1.
 func (r *TrussInstanceReconciler) resolveDeps(ctx context.Context, ti *appsv1alpha1.TrussInstance) (depResult, error) {
-	// Postgres is the system-of-record: if referenced, its Secret must carry database-url.
-	if pg := ti.Spec.Dependencies.Postgres; pg.Mode == "byo" && pg.ExistingSecret != "" {
-		sec := &corev1.Secret{}
-		err := r.Get(ctx, client.ObjectKey{Namespace: ti.Namespace, Name: pg.ExistingSecret}, sec)
-		if apierrors.IsNotFound(err) {
-			return depResult{reason: "PostgresSecretMissing", msg: "Secret " + pg.ExistingSecret + " not found"}, nil
-		}
+	// Postgres is the system-of-record and gates everything else.
+	switch pg := ti.Spec.Dependencies.Postgres; pg.Mode {
+	case "managed":
+		res, err := r.ensureManagedPostgres(ctx, ti)
 		if err != nil {
 			return depResult{}, err
 		}
-		if _, ok := sec.Data["database-url"]; !ok {
-			return depResult{reason: "PostgresSecretInvalid", msg: "Secret " + pg.ExistingSecret + " missing key database-url"}, nil
+		if !res.ready {
+			return res, nil
+		}
+	case "byo":
+		if pg.ExistingSecret != "" {
+			sec := &corev1.Secret{}
+			err := r.Get(ctx, client.ObjectKey{Namespace: ti.Namespace, Name: pg.ExistingSecret}, sec)
+			if apierrors.IsNotFound(err) {
+				return depResult{reason: "PostgresSecretMissing", msg: "Secret " + pg.ExistingSecret + " not found"}, nil
+			}
+			if err != nil {
+				return depResult{}, err
+			}
+			if _, ok := sec.Data["database-url"]; !ok {
+				return depResult{reason: "PostgresSecretInvalid", msg: "Secret " + pg.ExistingSecret + " missing key database-url"}, nil
+			}
 		}
 	}
 
 	// Storage / cache / flags: verify the referenced Secret exists (contents are app-specific).
+	// Managed mode for these is not implemented in v1; surface it rather than silently no-op.
 	others := []struct {
 		name string
 		dep  appsv1alpha1.DepSpec
@@ -66,16 +79,45 @@ func (r *TrussInstanceReconciler) resolveDeps(ctx context.Context, ti *appsv1alp
 		{"cache", ti.Spec.Dependencies.Cache},
 		{"flags", ti.Spec.Dependencies.Flags},
 	}
+	// Managed storage/cache/flags are independent, so we PROVISION them all, then
+	// gate on all being ready (parallel provisioning, not serialized one-by-one).
+	var pending *depResult
 	for _, o := range others {
-		if o.dep.Mode == "byo" && o.dep.ExistingSecret != "" {
-			err := r.Get(ctx, client.ObjectKey{Namespace: ti.Namespace, Name: o.dep.ExistingSecret}, &corev1.Secret{})
-			if apierrors.IsNotFound(err) {
-				return depResult{reason: "DependencySecretMissing", msg: o.name + " Secret " + o.dep.ExistingSecret + " not found"}, nil
+		switch o.dep.Mode {
+		case "managed":
+			var res depResult
+			var err error
+			switch o.name {
+			case "storage":
+				res, err = r.ensureManagedStorage(ctx, ti)
+			case "cache":
+				res, err = r.ensureManagedCache(ctx, ti)
+			case "flags":
+				res, err = r.ensureManagedFlags(ctx, ti)
+			default:
+				res = depResult{reason: "ManagedDependencyUnsupported", msg: "managed mode for " + o.name + " is not implemented yet; use mode: byo"}
 			}
 			if err != nil {
 				return depResult{}, err
 			}
+			if !res.ready && pending == nil {
+				r := res
+				pending = &r
+			}
+		case "byo":
+			if o.dep.ExistingSecret != "" {
+				err := r.Get(ctx, client.ObjectKey{Namespace: ti.Namespace, Name: o.dep.ExistingSecret}, &corev1.Secret{})
+				if apierrors.IsNotFound(err) {
+					return depResult{reason: "DependencySecretMissing", msg: o.name + " Secret " + o.dep.ExistingSecret + " not found"}, nil
+				}
+				if err != nil {
+					return depResult{}, err
+				}
+			}
 		}
+	}
+	if pending != nil {
+		return *pending, nil
 	}
 
 	return depResult{ready: true, reason: "AllDependenciesReady", msg: "all configured dependencies resolved"}, nil

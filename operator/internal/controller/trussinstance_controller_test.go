@@ -247,4 +247,49 @@ var _ = Describe("TrussInstance Controller", func() {
 			Expect(*sc.AllowPrivilegeEscalation).To(BeFalse())
 		})
 	})
+
+	Context("operator-managed postgres (CloudNativePG)", func() {
+		const (
+			resName = "managed-resource"
+			ns      = "default"
+		)
+		ctx := context.Background()
+		key := types.NamespacedName{Name: resName, Namespace: ns}
+
+		It("gates the app tier when the CloudNativePG CRD is absent and targets the -app secret", func() {
+			Expect(k8sClient.Create(ctx, &appsv1alpha1.TrussInstance{
+				ObjectMeta: metav1.ObjectMeta{Name: resName, Namespace: ns},
+				Spec: appsv1alpha1.TrussInstanceSpec{
+					Version: "0.2.0",
+					Scaling: appsv1alpha1.Scaling{Profile: "medium"},
+					Dependencies: appsv1alpha1.Dependencies{
+						Postgres: appsv1alpha1.DepSpec{Mode: "managed"},
+					},
+				},
+			})).To(Succeed())
+
+			r := &TrussInstanceReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			reconcile2 := func() {
+				for i := 0; i < 2; i++ { // finalizer, then the managed-dep gate
+					_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+					Expect(err).NotTo(HaveOccurred())
+				}
+			}
+
+			By("gating with a clear reason while CloudNativePG is not installed (envtest has no CNPG CRD)")
+			reconcile2()
+			ti := &appsv1alpha1.TrussInstance{}
+			Expect(k8sClient.Get(ctx, key, ti)).To(Succeed())
+			Expect(ti.Status.Phase).To(Equal(phasePending))
+			cond := meta.FindStatusCondition(ti.Status.Conditions, condDependenciesReady)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("CloudNativePGNotInstalled"))
+
+			By("not rolling the app tier until the database is ready")
+			Expect(errors.IsNotFound(
+				k8sClient.Get(ctx, types.NamespacedName{Name: resName + "-api", Namespace: ns}, &appsv1.Deployment{}),
+			)).To(BeTrue())
+		})
+	})
 })

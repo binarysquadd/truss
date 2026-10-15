@@ -49,6 +49,40 @@ spec:
           spec:
             description: spec defines the desired state of TrussInstance
             properties:
+              backup:
+                description: backup configures scheduled backups + point-in-time recovery
+                  for operator-managed Postgres (requires dependencies.postgres.mode
+                  = "managed").
+                properties:
+                  destinationPath:
+                    description: |-
+                      destinationPath is the object-store prefix for backups + WAL
+                      (e.g. "s3://my-bucket/truss"). Required when enabled.
+                    type: string
+                  enabled:
+                    description: enabled turns on WAL archiving + scheduled base backups
+                      to the object store.
+                    type: boolean
+                  endpointURL:
+                    description: |-
+                      endpointURL overrides the S3 endpoint for non-AWS object stores
+                      (e.g. an in-cluster RustFS/MinIO). Empty = AWS S3.
+                    type: string
+                  existingSecret:
+                    description: |-
+                      existingSecret holds the object-store credentials under keys ACCESS_KEY_ID
+                      and SECRET_ACCESS_KEY. Required when enabled.
+                    type: string
+                  retentionPolicy:
+                    description: retentionPolicy is how long to keep backups (e.g. "30d").
+                      Empty keeps all.
+                    type: string
+                  schedule:
+                    description: |-
+                      schedule is a 6-field (seconds-first) cron for the base backup.
+                      Defaults to "0 0 2 * * *" (02:00 daily).
+                    type: string
+                type: object
               components:
                 description: components configures the Truss application tier (api
                   + dashboard).
@@ -212,9 +246,9 @@ spec:
                 type: object
               dependencies:
                 description: |-
-                  dependencies wires Truss to its backing services. In v1 every dependency
-                  is "bring your own" (an existing Secret/endpoint); operator-managed
-                  dependencies (CloudNativePG, MinIO operator) are a later phase.
+                  dependencies wires Truss to its backing services. Each is "bring your own"
+                  (an existing Secret/endpoint) by default; Postgres additionally supports
+                  operator-managed mode (a CloudNativePG cluster the operator provisions).
                 properties:
                   cache:
                     description: cache is the Valkey/Redis cache + KV store.
@@ -227,7 +261,8 @@ spec:
                       mode:
                         description: |-
                           mode selects whether Truss consumes an existing dependency ("byo") or the
-                          operator provisions one ("managed"). v1 supports "byo".
+                          operator provisions one ("managed"). Postgres supports both ("managed" runs
+                          a CloudNativePG cluster); storage/cache/flags are "byo" in v1.
                         enum:
                         - byo
                         - managed
@@ -248,7 +283,8 @@ spec:
                       mode:
                         description: |-
                           mode selects whether Truss consumes an existing dependency ("byo") or the
-                          operator provisions one ("managed"). v1 supports "byo".
+                          operator provisions one ("managed"). Postgres supports both ("managed" runs
+                          a CloudNativePG cluster); storage/cache/flags are "byo" in v1.
                         enum:
                         - byo
                         - managed
@@ -292,7 +328,8 @@ spec:
                       mode:
                         description: |-
                           mode selects whether Truss consumes an existing dependency ("byo") or the
-                          operator provisions one ("managed"). v1 supports "byo".
+                          operator provisions one ("managed"). Postgres supports both ("managed" runs
+                          a CloudNativePG cluster); storage/cache/flags are "byo" in v1.
                         enum:
                         - byo
                         - managed
@@ -303,7 +340,7 @@ spec:
                       rule: '!has(self.mode) || self.mode != ''byo'' || (has(self.existingSecret)
                         && size(self.existingSecret) > 0)'
                   storage:
-                    description: storage is the S3-compatible object store (MinIO).
+                    description: storage is the S3-compatible object store (RustFS).
                     properties:
                       existingSecret:
                         description: |-
@@ -313,7 +350,8 @@ spec:
                       mode:
                         description: |-
                           mode selects whether Truss consumes an existing dependency ("byo") or the
-                          operator provisions one ("managed"). v1 supports "byo".
+                          operator provisions one ("managed"). Postgres supports both ("managed" runs
+                          a CloudNativePG cluster); storage/cache/flags are "byo" in v1.
                         enum:
                         - byo
                         - managed

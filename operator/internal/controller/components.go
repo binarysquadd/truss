@@ -133,18 +133,105 @@ func apiEnv(ti *appsv1alpha1.TrussInstance) []corev1.EnvVar {
 	if ti.Spec.Observability.OTLPEndpoint != "" {
 		env = append(env, corev1.EnvVar{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: ti.Spec.Observability.OTLPEndpoint})
 	}
-	if ti.Spec.Dependencies.Postgres.ExistingSecret != "" {
+	// Self-hosted mode + the operator-generated app secret. ENCRYPTION_KEY is REQUIRED
+	// for the API to boot, so the operator mints it (see ensureAppSecret) rather than
+	// making the user pre-create it.
+	env = append(env,
+		corev1.EnvVar{Name: "TRUSS_SELF_HOSTED", Value: "true"},
+		corev1.EnvVar{Name: "ENCRYPTION_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: appSecretName(ti)}, Key: "ENCRYPTION_KEY"}}},
+	)
+	env = append(env, oryEnv(ti)...)
+	// One DATABASE_URL wiring for both dependency modes: byo points at the user's
+	// Secret/"database-url", managed at the CNPG -app Secret/"uri" (see pgSecretRef).
+	if name, key, ok := pgSecretRef(ti); ok {
 		env = append(env, corev1.EnvVar{
 			Name: "DATABASE_URL",
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: ti.Spec.Dependencies.Postgres.ExistingSecret},
-					Key:                  "database-url",
+					LocalObjectReference: corev1.LocalObjectReference{Name: name},
+					Key:                  key,
 				},
 			},
 		})
 	}
+	// Operator-managed storage/cache/flags are wired here by pointing the app at the
+	// managed Services + generated Secrets. BYO deps are injected via apiEnvFrom.
+	env = append(env, storageEnv(ti)...)
+	env = append(env, cacheEnv(ti)...)
+	env = append(env, flagsEnv(ti)...)
 	return env
+}
+
+// storageEnv wires the app to operator-managed RustFS (empty for BYO — see apiEnvFrom).
+func storageEnv(ti *appsv1alpha1.TrussInstance) []corev1.EnvVar {
+	if ti.Spec.Dependencies.Storage.Mode != "managed" {
+		return nil
+	}
+	ref := func(key string) *corev1.EnvVarSource {
+		return &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: storageSecretName(ti)}, Key: key}}
+	}
+	return []corev1.EnvVar{
+		{Name: "STORAGE_S3_ENDPOINT", Value: "http://" + storageName(ti) + ":9000"},
+		{Name: "STORAGE_ACCESS_KEY", ValueFrom: ref("STORAGE_ACCESS_KEY")},
+		{Name: "STORAGE_SECRET_KEY", ValueFrom: ref("STORAGE_SECRET_KEY")},
+	}
+}
+
+// cacheEnv wires the app to operator-managed Valkey (empty for BYO).
+func cacheEnv(ti *appsv1alpha1.TrussInstance) []corev1.EnvVar {
+	if ti.Spec.Dependencies.Cache.Mode != "managed" {
+		return nil
+	}
+	return []corev1.EnvVar{
+		{Name: "VALKEY_HOST", Value: cacheName(ti)},
+		{Name: "VALKEY_PORT", Value: "6379"},
+		{Name: "VALKEY_PASSWORD", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: cacheSecretName(ti)}, Key: "VALKEY_PASSWORD"}}},
+	}
+}
+
+// flagsEnv wires the app to operator-managed flagd (empty for BYO).
+func flagsEnv(ti *appsv1alpha1.TrussInstance) []corev1.EnvVar {
+	if ti.Spec.Dependencies.Flags.Mode != "managed" {
+		return nil
+	}
+	return []corev1.EnvVar{
+		{Name: "FLAGD_HOST", Value: "http://" + flagsName(ti)},
+		{Name: "FLAGD_PORT", Value: "8013"},
+	}
+}
+
+// oryEnv wires the app to the BYO Ory identity stack from the spec's endpoints.
+// (Ory is byo-only in v1 — no upstream operator — so these come from the CR, not
+// from an operator-provisioned workload.)
+func oryEnv(ti *appsv1alpha1.TrussInstance) []corev1.EnvVar {
+	e := ti.Spec.Dependencies.Ory.Endpoints
+	var env []corev1.EnvVar
+	add := func(name, val string) {
+		if val != "" {
+			env = append(env, corev1.EnvVar{Name: name, Value: val})
+		}
+	}
+	add("KRATOS_PUBLIC_URL", e.Kratos)
+	add("KETO_READ_URL", e.Keto)
+	add("HYDRA_PUBLIC_URL", e.Hydra)
+	add("OATHKEEPER_PROXY_URL", e.Oathkeeper)
+	return env
+}
+
+// apiEnvFrom injects every BYO storage/cache/flags Secret wholesale into the app
+// container (the Secret's keys are the env var names). Postgres BYO is NOT included
+// here — it is wired to a single DATABASE_URL key via pgSecretRef/apiEnv.
+func apiEnvFrom(ti *appsv1alpha1.TrussInstance) []corev1.EnvFromSource {
+	var from []corev1.EnvFromSource
+	add := func(dep appsv1alpha1.DepSpec) {
+		if dep.Mode == "byo" && dep.ExistingSecret != "" {
+			from = append(from, corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: dep.ExistingSecret}}})
+		}
+	}
+	add(ti.Spec.Dependencies.Storage)
+	add(ti.Spec.Dependencies.Cache)
+	add(ti.Spec.Dependencies.Flags)
+	return from
 }
 
 // applyPodTemplateOverride strategic-merges the user's podTemplate escape-hatch
@@ -205,6 +292,7 @@ func (r *TrussInstanceReconciler) desiredAPIDeployment(ti *appsv1alpha1.TrussIns
 				Image:           apiImageRepo + ":" + ti.Spec.Version,
 				Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: apiPort}},
 				Env:             apiEnv(ti),
+				EnvFrom:         apiEnvFrom(ti),
 				Resources:       resourcesFor(ti.Spec.Components.API, ti.Spec.Scaling.Profile),
 				ReadinessProbe:  tcpProbe(apiPort),
 				SecurityContext: hardenedContainerSecurity(),

@@ -45,10 +45,13 @@ type TrussInstanceReconciler struct {
 // +kubebuilder:rbac:groups=apps.truss.binarysquad.org,resources=trussinstances/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors;prometheusrules,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters;scheduledbackups;backups,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile moves the cluster toward the desired state described by a TrussInstance.
 // It is level-triggered and idempotent: it re-derives the whole desired state every
@@ -73,8 +76,9 @@ func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Deletion: run finalizer cleanup, then release the object.
 	if !ti.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(&ti, finalizerName) {
-			// v1 owns only objects with owner refs, which Kubernetes GCs for us;
-			// the finalizer is the seam for ordered teardown of managed deps (v2).
+			// Owned objects (app tier, and the managed CNPG cluster) carry owner
+			// refs, so Kubernetes GCs them for us; the finalizer stays as the seam
+			// for any future ordered teardown that GC can't express.
 			log.Info("finalizing TrussInstance", "name", ti.Name)
 			controllerutil.RemoveFinalizer(&ti, finalizerName)
 			if err := r.Update(ctx, &ti); err != nil {
@@ -110,6 +114,12 @@ func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 	setCondition(&ti, condDependenciesReady, metav1.ConditionTrue, dep.reason, dep.msg)
+
+	// Mint the app's own secrets (ENCRYPTION_KEY, required to boot) before the app tier
+	// references them. Generated once, then stable.
+	if err := r.ensureAppSecret(ctx, &ti); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	// App tier via Server-Side Apply: build the desired api + dashboard objects and
 	// apply each. SSA is idempotent and heals drift on the fields the operator owns.

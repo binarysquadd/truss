@@ -1,0 +1,40 @@
+apiVersion: apps.truss.binarysquad.org/v1alpha1
+kind: TrussInstance
+metadata:
+  labels:
+    app.kubernetes.io/name: operator
+    app.kubernetes.io/managed-by: kustomize
+  name: trussinstance-managed-sample
+spec:
+  version: "0.2.0"
+  publicURL: https://truss.binarysquad.org
+  components:
+    api:
+      replicas: 2
+    dashboard:
+      replicas: 2
+  dependencies:
+    # Operator-managed Postgres: the operator provisions a CloudNativePG cluster
+    # (requires the CloudNativePG operator in the cluster) and wires the API to the
+    # generated "<name>-pg-app" Secret. No existingSecret needed. The HA topology is
+    # sized off scaling.profile (medium/large -> 3 instances).
+    postgres:
+      mode: managed
+    # Ory remains bring-your-own (no upstream operator exists).
+    ory:
+      mode: byo
+      endpoints:
+        kratos: http://truss-kratos:4433
+        keto: http://truss-keto:4466
+        hydra: http://truss-hydra:4444
+        oathkeeper: http://truss-oathkeeper:4455
+  scaling:
+    profile: medium
+  resilience:
+    pdb:
+      enabled: true
+      minAvailable: 1
+    topologySpread: true
+  ingress:
+    enabled: true
+    tls: true
