@@ -259,7 +259,7 @@ async function autoProvisionDefaults(tenantId, email, pool) {
 
 // Exempt paths that don't need auth
 // Paths that skip auth entirely (login/register must be reachable without a session)
-const EXEMPT_PATHS = ["/api/health", "/api/auth/login", "/api/auth/register", "/api/auth/recovery", "/api/billing/webhook"];
+const EXEMPT_PATHS = ["/api/health", "/api/auth/login", "/api/auth/register", "/api/auth/recovery", "/api/billing/webhook", "/api/sample-app/demo"];
 
 export function sessionMiddleware(req, res, next) {
   // Skip auth for exempt paths

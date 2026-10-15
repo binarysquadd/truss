@@ -7,9 +7,13 @@ import { createRealtimeTrigger, createWebhookTrigger } from "../lib/realtime.js"
 import { getS3Client } from "../lib/s3.js";
 import { CreateBucketCommand, PutObjectCommand, ListObjectsV2Command, DeleteObjectsCommand, DeleteBucketCommand, HeadBucketCommand } from "@aws-sdk/client-s3";
 import { kratosAdminRequest } from "../lib/kratos.js";
+import * as cache from "../lib/cache.js";
+import { HYDRA_PUBLIC_URL, OATHKEEPER_PROXY_URL } from "../lib/state.js";
+import { DEMO_HTML } from "./sample-app-demo-page.js";
 import logger from "../lib/logger.js";
 
 const log = logger.child({ module: "sample-app" });
+const DEMO_CACHE_KEY = "sample_app:welcome";
 
 export const router = express.Router();
 
@@ -21,6 +25,11 @@ const SAMPLE_PROJECT = "sample-project";
 // The sample app creates a global `sample_app` schema — restrict to demo tenants
 // (safe, isolated, rate-limited) or admins (dev mode / self-hosted owners).
 router.use("/api/sample-app", (req, res, next) => {
+  // The consuming demo app + its read/interact endpoints are shareable: no session required
+  // (sample data only + a public anon key). This is what makes the demo URL openable by anyone.
+  // NOTE: inside router.use("/api/sample-app", ...) Express makes req.path RELATIVE to the mount,
+  // so the demo subpaths appear here as "/demo", "/demo/state", etc.
+  if (req.path.startsWith("/demo")) return next();
   if (!req.tenant?.id) return res.status(401).json({ error: "Authentication required" });
   const isDev = req.tenant?.id?.startsWith("dev-") || req.tenant?.id === "local";
   if (!req.tenant?.isDemo && !req.tenant?.isAdmin && !isDev) {
@@ -335,7 +344,7 @@ router.post("/api/sample-app/load", async (req, res) => {
       { title: "Full-Text Search with tsvector", body: "PostgreSQL built-in full-text search is surprisingly powerful. Using tsvector and tsquery, you can implement search with ranking, highlighting, and multiple language support without any external search engine. This tutorial covers the basics and advanced configurations.", tags: ["postgres", "search", "tutorial"], published: true, catIdx: 4 },
       { title: "Understanding RBAC and ReBAC", body: "Role-Based Access Control (RBAC) and Relation-Based Access Control (ReBAC) are two approaches to authorization. RBAC assigns permissions through roles, while ReBAC models permissions as relationships between entities. We compare both models and discuss when to use each.", tags: ["authorization", "security", "rbac"], published: true, catIdx: 3 },
       { title: "Kubernetes Observability Stack", body: "Monitoring Kubernetes clusters requires a comprehensive observability stack. This post covers setting up Prometheus for metrics, Grafana for visualization, and Loki for log aggregation, giving you full visibility into your cluster health.", tags: ["kubernetes", "observability", "devops"], published: true, catIdx: 1 },
-      { title: "S3-Compatible Object Storage", body: "MinIO provides S3-compatible storage that you can self-host. This guide covers deploying MinIO, configuring buckets, setting up access policies, and integrating it into your application for file uploads and static asset hosting.", tags: ["storage", "minio", "s3"], published: true, catIdx: 1 },
+      { title: "S3-Compatible Object Storage", body: "RustFS provides S3-compatible storage that you can self-host. This guide covers deploying RustFS, configuring buckets, setting up access policies, and integrating it into your application for file uploads and static asset hosting.", tags: ["storage", "rustfs", "s3"], published: true, catIdx: 1 },
       { title: "React 19 Server Components", body: "React Server Components represent a paradigm shift in how we build React applications. This post explains the mental model, shows practical examples, and discusses the tradeoffs compared to traditional client-side rendering.", tags: ["react", "frontend", "javascript"], published: true, catIdx: 0 },
       { title: "Database Branching for CI/CD", body: "Database branching creates isolated copies of your database for testing and development. This technique enables parallel feature development, safe migration testing, and automated CI pipelines that include database schema changes.", tags: ["database", "ci-cd", "branching"], published: true, catIdx: 1 },
       { title: "Webhook Design Patterns", body: "Webhooks are a powerful integration mechanism, but designing them well requires careful thought. This post covers retry strategies, signature verification, idempotency, and delivery guarantees for production-grade webhook systems.", tags: ["webhooks", "architecture", "api"], published: true, catIdx: 0 },
@@ -603,7 +612,28 @@ router.post("/api/sample-app/load", async (req, res) => {
       }
     }
 
-    // ─── Feature: Storage (MinIO) — best-effort ───
+    // 12b. Dedicated PUBLIC anon key for the consuming demo app, stored so the demo page can use it.
+    // (anon keys are public by design — like a Supabase anon key embedded in a frontend.)
+    await pool.query(`CREATE TABLE IF NOT EXISTS sample_app.app_meta (key text PRIMARY KEY, value text)`);
+    const demoKey = generateApiKey("anon");
+    await pool.query(
+      `INSERT INTO truss_internal.api_keys (key_type, key_prefix, key_hash, label, tenant_id) VALUES ('anon', $1, $2, $3, $4)`,
+      [demoKey.prefix, demoKey.hash, "Sample App Demo (anon)", tenantId]
+    );
+    await pool.query(
+      `INSERT INTO sample_app.app_meta (key, value) VALUES ('anon_api_key', $1) ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+      [demoKey.fullKey]
+    );
+
+    // 13. Cache (Valkey) — seed a KV entry so the demo can show a cache read.
+    try {
+      const c = cache.getClient?.();
+      if (c) await c.set(DEMO_CACHE_KEY, JSON.stringify({ message: "Hello from the Truss sample app!", seeded_at: new Date().toISOString() }));
+    } catch (e) {
+      log.warn({ err: e.message }, "could not seed cache entry");
+    }
+
+    // ─── Feature: Storage (RustFS) — best-effort ───
     try {
       const s3 = getS3Client();
 
@@ -621,7 +651,7 @@ router.post("/api/sample-app/load", async (req, res) => {
       const sampleObjects = [
         {
           Key: "README.md",
-          Body: "# Sample App Uploads\n\nThis bucket was created by the Truss sample app loader.\nIt demonstrates S3-compatible object storage via MinIO.\n\n## Contents\n- `config.json` — sample configuration\n- `sample.csv` — sample data export\n",
+          Body: "# Sample App Uploads\n\nThis bucket was created by the Truss sample app loader.\nIt demonstrates S3-compatible object storage via RustFS.\n\n## Contents\n- `config.json` — sample configuration\n- `sample.csv` — sample data export\n",
           ContentType: "text/markdown",
         },
         {
@@ -741,6 +771,8 @@ router.post("/api/sample-app/load", async (req, res) => {
     return res.status(201).json({
       ok: true,
       message: "Sample app loaded successfully",
+      demoUrl: "/api/sample-app/demo",
+      anonKey: demoKey.fullKey,
       stats: {
         tables: stats.tables,
         rows: stats.rows,
@@ -767,7 +799,7 @@ router.delete("/api/sample-app/unload", async (req, res) => {
   try {
     const tenantId = req.tenant?.id || null;
 
-    // ─── Cleanup: Storage (MinIO) ───
+    // ─── Cleanup: Storage (RustFS) ───
     try {
       const s3 = getS3Client();
       // List and delete all objects in the bucket
@@ -858,10 +890,126 @@ router.delete("/api/sample-app/unload", async (req, res) => {
       );
     } catch { /* ignore */ }
 
+    // Revoke the demo anon key + clear the demo cache entry
+    try {
+      await pool.query(`UPDATE truss_internal.api_keys SET revoked = true WHERE label = 'Sample App Demo (anon)'`);
+    } catch { /* ignore */ }
+    try {
+      const c = cache.getClient?.();
+      if (c) await c.del(DEMO_CACHE_KEY);
+    } catch { /* ignore */ }
+
     log.info("sample app unloaded");
     return res.json({ ok: true, message: "Sample app unloaded" });
   } catch (e) {
     log.error({ err: e.message }, "failed to unload sample app");
     return res.status(500).json({ error: e.message });
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// "DevDrop" — a tiny REAL developer micro-community served by the Truss API.
+// It naturally uses the platform: Postgres (posts/comments), full-text search,
+// realtime (live comments), RustFS storage (attachments), Kratos (sign-in-as),
+// Valkey (reaction counts), RLS (only published posts), webhooks (fire on comment).
+// All endpoints are public + shareable (no session).
+// ═══════════════════════════════════════════════════════════════════════
+
+const sampleLoaded = async (pool) =>
+  (await pool.query(`SELECT 1 FROM information_schema.schemata WHERE schema_name='sample_app'`)).rows.length > 0;
+
+// GET /api/sample-app/demo — the app shell (single-page HTML).
+router.get("/api/sample-app/demo", (_req, res) => {
+  res.type("html").send(DEMO_HTML);
+});
+
+// GET /api/sample-app/demo/meta — bootstrap: sign-in-as users, tags, public anon key, realtime WS, tech credits.
+router.get("/api/sample-app/demo/meta", async (_req, res) => {
+  const pool = getPool();
+  if (!pool || !(await sampleLoaded(pool))) return res.json({ loaded: false });
+  let anonKey = "";
+  try { anonKey = (await pool.query(`SELECT value FROM sample_app.app_meta WHERE key='anon_api_key'`)).rows[0]?.value || ""; } catch { /* ignore */ }
+  const users = (await pool.query(`SELECT id, name, email, avatar_url FROM sample_app.users ORDER BY name`)).rows;
+  const tags = (await pool.query(`SELECT DISTINCT unnest(tags) AS tag FROM sample_app.posts WHERE published ORDER BY tag`)).rows.map((r) => r.tag);
+  return res.json({
+    loaded: true, anonKey, realtimeWs: "/realtime", users, tags,
+    tech: { database: "Postgres", auth: "Ory Kratos", storage: "RustFS", cache: "Valkey", realtime: "WebSocket CDC", search: "Postgres tsvector", permissions: "Postgres RLS", flags: "flagd", oauth2: "Ory Hydra", gateway: "Ory Oathkeeper" },
+  });
+});
+
+// GET /api/sample-app/demo/posts?q=&tag= — the feed (published only = RLS intent; full-text search + tag filter; reaction counts from Valkey).
+router.get("/api/sample-app/demo/posts", async (req, res) => {
+  const pool = getPool();
+  if (!pool || !(await sampleLoaded(pool))) return res.json({ posts: [] });
+  const tag = (req.query.tag || "").toString().trim();
+  const q = (req.query.q || "").toString().trim().split(/\s+/).filter(Boolean).join(" & ");
+  const params = [];
+  let where = "p.published = true";
+  if (tag) { params.push(tag); where += ` AND $${params.length} = ANY(p.tags)`; }
+  if (q) { params.push(q); where += ` AND p.search_vector @@ to_tsquery('english', $${params.length})`; }
+  const rows = (await pool.query(
+    `SELECT p.id, p.title, left(p.body, 200) AS excerpt, p.tags, p.created_at,
+            u.name AS author, u.avatar_url,
+            (SELECT count(*)::int FROM sample_app.comments c WHERE c.post_id = p.id) AS comments
+     FROM sample_app.posts p JOIN sample_app.users u ON u.id = p.author_id
+     WHERE ${where} ORDER BY p.created_at DESC LIMIT 30`, params
+  )).rows;
+  try {
+    const c = cache.getClient?.();
+    if (c) for (const p of rows) { const n = await c.get(`sample_app:reactions:${p.id}`); p.reactions = n ? parseInt(n, 10) : 0; }
+  } catch { /* ignore */ }
+  return res.json({ posts: rows });
+});
+
+// GET /api/sample-app/demo/posts/:id — a post with author, comments, storage attachments, related posts, reactions.
+router.get("/api/sample-app/demo/posts/:id", async (req, res) => {
+  const pool = getPool();
+  if (!pool || !(await sampleLoaded(pool))) return res.status(404).json({ error: "not loaded" });
+  try {
+    const post = (await pool.query(
+      `SELECT p.id, p.title, p.body, p.tags, p.published, p.created_at, u.name AS author, u.avatar_url, u.bio
+       FROM sample_app.posts p JOIN sample_app.users u ON u.id = p.author_id WHERE p.id = $1`, [req.params.id]
+    )).rows[0];
+    if (!post) return res.status(404).json({ error: "post not found" });
+    const comments = (await pool.query(
+      `SELECT c.id, c.body, c.created_at, u.name AS author, u.avatar_url
+       FROM sample_app.comments c JOIN sample_app.users u ON u.id = c.author_id
+       WHERE c.post_id = $1 ORDER BY c.created_at ASC`, [req.params.id]
+    )).rows;
+    let attachments = [];
+    try { const listed = await getS3Client().send(new ListObjectsV2Command({ Bucket: SAMPLE_BUCKET })); attachments = (listed.Contents || []).map((o) => ({ key: o.Key, size: o.Size })); } catch { /* ignore */ }
+    const related = (await pool.query(
+      `SELECT id, title FROM sample_app.posts WHERE published AND id <> $1 AND tags && $2 ORDER BY created_at DESC LIMIT 4`, [post.id, post.tags]
+    )).rows;
+    let reactions = 0;
+    try { const c = cache.getClient?.(); if (c) { const n = await c.get(`sample_app:reactions:${post.id}`); reactions = n ? parseInt(n, 10) : 0; } } catch { /* ignore */ }
+    return res.json({ post, comments, attachments, related, reactions });
+  } catch (e) { return res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/sample-app/demo/posts/:id/comment { body, authorId } — add a comment (fires realtime + the webhook).
+router.post("/api/sample-app/demo/posts/:id/comment", async (req, res) => {
+  const pool = getPool();
+  if (!pool || !(await sampleLoaded(pool))) return res.status(404).json({ error: "not loaded" });
+  const body = (req.body?.body || "").toString().slice(0, 500).trim();
+  if (!body) return res.status(400).json({ error: "body is required" });
+  try {
+    let authorId = (req.body?.authorId || "").toString();
+    if (!authorId) authorId = (await pool.query(`SELECT id FROM sample_app.users ORDER BY random() LIMIT 1`)).rows[0]?.id;
+    const { rows } = await pool.query(
+      `INSERT INTO sample_app.comments (post_id, author_id, body) VALUES ($1,$2,$3) RETURNING id, body, created_at`, [req.params.id, authorId, body]
+    );
+    const author = (await pool.query(`SELECT name, avatar_url FROM sample_app.users WHERE id=$1`, [authorId])).rows[0] || {};
+    return res.status(201).json({ ok: true, comment: { ...rows[0], author: author.name, avatar_url: author.avatar_url } });
+  } catch (e) { return res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/sample-app/demo/posts/:id/react — a 🔥 reaction counter in Valkey (the cache feature).
+router.post("/api/sample-app/demo/posts/:id/react", async (req, res) => {
+  try {
+    const c = cache.getClient?.();
+    if (!c) return res.json({ reactions: 0, cache: false });
+    const n = await c.incr(`sample_app:reactions:${req.params.id}`);
+    return res.json({ reactions: n, cache: true });
+  } catch (e) { return res.status(500).json({ error: e.message }); }
 });

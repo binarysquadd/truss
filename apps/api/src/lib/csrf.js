@@ -86,6 +86,9 @@ export function csrfMiddleware(req, res, next) {
   // Skip /v1/* routes (API key auth, no cookies)
   if (req.path.startsWith("/v1/")) return next();
 
+  // Skip the public sample-app demo endpoints (shareable, sessionless — no CSRF cookie to pair)
+  if (req.path.startsWith("/api/sample-app/demo")) return next();
+
   // Skip /api paths that don't need CSRF
   if (!req.path.startsWith("/api/")) return next();
 
