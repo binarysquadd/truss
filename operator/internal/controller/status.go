@@ -46,9 +46,11 @@ const (
 )
 
 // setCondition upserts a status condition, stamping the current generation so
-// clients can tell whether a condition reflects the latest spec.
-func setCondition(ti *appsv1alpha1.TrussInstance, condType string, status metav1.ConditionStatus, reason, msg string) {
-	meta.SetStatusCondition(&ti.Status.Conditions, metav1.Condition{
+// clients can tell whether a condition reflects the latest spec. It returns true
+// when the condition's status/reason actually changed, so callers can emit a
+// Kubernetes Event only on real transitions (not on every reconcile).
+func setCondition(ti *appsv1alpha1.TrussInstance, condType string, status metav1.ConditionStatus, reason, msg string) bool {
+	return meta.SetStatusCondition(&ti.Status.Conditions, metav1.Condition{
 		Type:               condType,
 		Status:             status,
 		Reason:             reason,

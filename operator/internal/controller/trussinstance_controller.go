@@ -27,6 +27,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -38,7 +39,15 @@ import (
 // TrussInstanceReconciler reconciles a TrussInstance object
 type TrussInstanceReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
+}
+
+// event emits a Kubernetes Event on the TrussInstance (nil-safe for tests).
+func (r *TrussInstanceReconciler) event(ti *appsv1alpha1.TrussInstance, eventType, reason, msg string) {
+	if r.Recorder != nil {
+		r.Recorder.Event(ti, eventType, reason, msg)
+	}
 }
 
 // +kubebuilder:rbac:groups=apps.truss.binarysquad.org,resources=trussinstances,verbs=get;list;watch;create;update;patch;delete
@@ -50,6 +59,7 @@ type TrussInstanceReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors;prometheusrules,verbs=get;list;watch;create;update;patch;delete
@@ -115,7 +125,9 @@ func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
-	setCondition(&ti, condDependenciesReady, metav1.ConditionTrue, dep.reason, dep.msg)
+	if setCondition(&ti, condDependenciesReady, metav1.ConditionTrue, dep.reason, dep.msg) {
+		r.event(&ti, corev1.EventTypeNormal, "DependenciesReady", dep.msg)
+	}
 
 	// Mint the app's own secrets (ENCRYPTION_KEY, required to boot) before the app tier
 	// references them. Generated once, then stable.
@@ -132,7 +144,9 @@ func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	if !mig.done {
 		if mig.failed {
-			setCondition(&ti, condReady, metav1.ConditionFalse, "MigrationFailed", mig.msg)
+			if setCondition(&ti, condReady, metav1.ConditionFalse, "MigrationFailed", mig.msg) {
+				r.event(&ti, corev1.EventTypeWarning, "MigrationFailed", mig.msg)
+			}
 			setCondition(&ti, condProgressing, metav1.ConditionFalse, "MigrationFailed", mig.msg)
 			ti.Status.Phase = phaseDegraded
 		} else {
@@ -205,7 +219,9 @@ func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	fullyReady := apiCS.Ready >= apiCS.Desired && dashCS.Ready >= dashCS.Desired
 	if fullyReady {
 		ti.Status.Phase = phaseReady
-		setCondition(&ti, condReady, metav1.ConditionTrue, "AllComponentsReady", "all components have their desired replicas ready")
+		if setCondition(&ti, condReady, metav1.ConditionTrue, "AllComponentsReady", "all components have their desired replicas ready") {
+			r.event(&ti, corev1.EventTypeNormal, "Ready", "all components are ready")
+		}
 		setCondition(&ti, condProgressing, metav1.ConditionFalse, "Reconciled", "steady state")
 	} else {
 		ti.Status.Phase = phaseProvisioning
