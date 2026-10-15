@@ -21,6 +21,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -44,6 +45,7 @@ type TrussInstanceReconciler struct {
 // +kubebuilder:rbac:groups=apps.truss.binarysquad.org,resources=trussinstances/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps.truss.binarysquad.org,resources=trussinstances/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
@@ -119,6 +121,32 @@ func (r *TrussInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// references them. Generated once, then stable.
 	if err := r.ensureAppSecret(ctx, &ti); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// Pre-roll migration gate ("migrate-then-switch"): run a migrate-only Job with the
+	// target image and roll the app only once it succeeds. A failed migration blocks the
+	// rollout instead of letting new pods half-break the schema.
+	mig, err := r.ensureMigrationJob(ctx, &ti)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !mig.done {
+		if mig.failed {
+			setCondition(&ti, condReady, metav1.ConditionFalse, "MigrationFailed", mig.msg)
+			setCondition(&ti, condProgressing, metav1.ConditionFalse, "MigrationFailed", mig.msg)
+			ti.Status.Phase = phaseDegraded
+		} else {
+			setCondition(&ti, condProgressing, metav1.ConditionTrue, "Migrating", mig.msg)
+			ti.Status.Phase = phaseProvisioning
+		}
+		ti.Status.ObservedGeneration = ti.Generation
+		if err := r.Status().Update(ctx, &ti); err != nil {
+			return ctrl.Result{}, err
+		}
+		if mig.failed {
+			return ctrl.Result{}, nil // await a spec fix; a new generation re-triggers
+		}
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
 	// App tier via Server-Side Apply: build the desired api + dashboard objects and
@@ -206,6 +234,7 @@ func (r *TrussInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&networkingv1.Ingress{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
+		Owns(&batchv1.Job{}).
 		Named("trussinstance").
 		Complete(r)
 }

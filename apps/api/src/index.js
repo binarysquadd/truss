@@ -703,6 +703,15 @@ wss.on("connection", (ws) => {
   ws.on("error", () => { presenceDisconnect(ws); realtimeClients.delete(ws); });
 });
 
+if (process.env.TRUSS_MIGRATE_ONLY === "true") {
+  // Operator pre-roll migration Job (TRUSS_MIGRATE_ONLY): apply the schema then exit,
+  // FAILING the process on error so a bad migration blocks the rollout — unlike the
+  // normal boot path below, which catches-and-continues.
+  ensureInternalSchema()
+    .then(() => { logger.info("migrations applied (migrate-only); exiting 0"); process.exit(0); })
+    .catch((err) => { logger.error({ err: err.message }, "migration failed (migrate-only); exiting 1"); process.exit(1); });
+} else {
+
 // ─── Bootstrap internal schema before accepting requests ───
 ensureInternalSchema().then(async () => {
   logger.info("Truss internal schema ready");
@@ -772,3 +781,5 @@ ensureInternalSchema().then(async () => {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
 });
+
+}
