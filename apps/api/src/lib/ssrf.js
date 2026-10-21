@@ -22,9 +22,13 @@ const V4_BLOCKS = [
 function isBlockedV4(ip) { return V4_BLOCKS.some(([b, n]) => inV4(ip, b, n)); }
 function isBlockedV6(ip) {
   const x = ip.toLowerCase().replace(/^\[|\]$/g, "");
-  return x === "::1" || x === "::" || x.startsWith("fe80") || x.startsWith("fc") ||
-         x.startsWith("fd") || x.startsWith("::ffff:127.") || x.startsWith("::ffff:10.") ||
-         x.startsWith("::ffff:169.254") || x.startsWith("::ffff:192.168") || x.startsWith("::ffff:172.");
+  if (x === "::1" || x === "::") return true;
+  if (/^(fe80|fc|fd)/.test(x)) return true;          // link-local + unique-local
+  if (x.startsWith("64:ff9b:")) return true;          // NAT64 well-known prefix
+  // IPv4-mapped (::ffff:a.b.c.d) — run the full v4 blocklist (catches CGNAT/metadata/etc.)
+  const m = x.match(/::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (m) return isBlockedV4(m[1]);
+  return false;
 }
 
 // Resolve a bare host (or literal IP) and throw `errMsg` if any address is blocked.

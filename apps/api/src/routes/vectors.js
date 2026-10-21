@@ -3,6 +3,7 @@ import { getPool, getCustomerPool } from "../lib/state.js";
 import logger from "../lib/logger.js";
 import { trackFeature } from "../lib/observability.js";
 import { isValidIdentifier } from "../lib/helpers.js";
+import { adminMiddleware } from "../lib/session.js";
 
 const log = logger.child({ module: "vectors" });
 
@@ -30,7 +31,7 @@ router.get("/api/vectors/status", async (req, res) => {
 });
 
 // POST /api/vectors/enable — CREATE EXTENSION vector
-router.post("/api/vectors/enable", async (req, res) => {
+router.post("/api/vectors/enable", adminMiddleware, async (req, res) => {
   const pool = getCustomerPool(req);
   if (!pool) return res.status(503).json({ error: "No database connected" });
   try {
@@ -112,7 +113,7 @@ router.get("/api/vectors/collections/:schema/:table", async (req, res) => {
 });
 
 // POST /api/vectors/collections — create a vector table
-router.post("/api/vectors/collections", async (req, res) => {
+router.post("/api/vectors/collections", adminMiddleware, async (req, res) => {
   const pool = getCustomerPool(req);
   if (!pool) return res.status(503).json({ error: "No database connected" });
   const name = String(req.body?.name || "").trim();
@@ -144,7 +145,7 @@ router.post("/api/vectors/collections", async (req, res) => {
 });
 
 // DELETE /api/vectors/collections/:schema/:table — drop vector table
-router.delete("/api/vectors/collections/:schema/:table", async (req, res) => {
+router.delete("/api/vectors/collections/:schema/:table", adminMiddleware, async (req, res) => {
   const pool = getCustomerPool(req);
   if (!pool) return res.status(503).json({ error: "No database connected" });
   const { schema, table } = req.params;
@@ -229,7 +230,7 @@ router.post("/api/vectors/collections/:schema/:table/search", async (req, res) =
 });
 
 // POST /api/vectors/collections/:schema/:table/indexes — create vector index
-router.post("/api/vectors/collections/:schema/:table/indexes", async (req, res) => {
+router.post("/api/vectors/collections/:schema/:table/indexes", adminMiddleware, async (req, res) => {
   const pool = getCustomerPool(req);
   if (!pool) return res.status(503).json({ error: "No database connected" });
   const { schema, table } = req.params;
@@ -263,7 +264,7 @@ router.post("/api/vectors/collections/:schema/:table/indexes", async (req, res) 
 });
 
 // DELETE /api/vectors/collections/:schema/:table/indexes/:name — drop index
-router.delete("/api/vectors/collections/:schema/:table/indexes/:name", async (req, res) => {
+router.delete("/api/vectors/collections/:schema/:table/indexes/:name", adminMiddleware, async (req, res) => {
   const pool = getCustomerPool(req);
   if (!pool) return res.status(503).json({ error: "No database connected" });
   const { schema, table, name } = req.params;

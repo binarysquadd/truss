@@ -49,8 +49,12 @@ export const FORBIDDEN_KEYWORDS = [
   "insert", "update", "delete", "alter", "drop", "truncate", "create",
   "grant", "revoke", "copy", "vacuum", "reindex", "cluster", "refresh",
   "call", "do", "merge",
-  "dblink", "dblink_exec", "lo_import", "lo_export",
+  "dblink", "dblink_exec", "lo_import", "lo_export", "lo_get", "lo_put", "lo_from_bytea",
   "pg_read_file", "pg_write_file", "pg_read_binary_file",
+  // Server-side filesystem enumeration/read helpers that are SELECT-only (so they'd
+  // otherwise pass the read-only transaction guard) — block by name.
+  "pg_ls_dir", "pg_stat_file", "pg_ls_waldir", "pg_ls_logdir", "pg_ls_tmpdir",
+  "pg_ls_archive_statusdir", "pg_current_logfile", "pg_read_server_files",
 ];
 
 export const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../db/migrations");

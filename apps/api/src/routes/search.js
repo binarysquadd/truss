@@ -2,6 +2,7 @@ import express from "express";
 import { getPool, getCustomerPool } from "../lib/state.js";
 import logger from "../lib/logger.js";
 import { trackFeature } from "../lib/observability.js";
+import { adminMiddleware } from "../lib/session.js";
 
 const log = logger.child({ module: "search" });
 
@@ -139,7 +140,7 @@ router.post("/api/search/test", async (req, res) => {
 });
 
 // POST /api/search/setup — add tsvector column + trigger + GIN index to a table
-router.post("/api/search/setup", async (req, res) => {
+router.post("/api/search/setup", adminMiddleware, async (req, res) => {
   const pool = getCustomerPool(req);
   if (!pool) return res.status(503).json({ error: "No database connected" });
   const table = String(req.body?.table || "").trim();
@@ -201,7 +202,7 @@ router.post("/api/search/setup", async (req, res) => {
 });
 
 // DELETE /api/search/setup — remove FTS from a table (column + trigger + index)
-router.delete("/api/search/setup", async (req, res) => {
+router.delete("/api/search/setup", adminMiddleware, async (req, res) => {
   const pool = getCustomerPool(req);
   if (!pool) return res.status(503).json({ error: "No database connected" });
   const table = String(req.body?.table || "").trim();

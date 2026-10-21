@@ -54,8 +54,9 @@ export function validateReadOnlySql(sql) {
   if (!/^(select|with|explain)\b/i.test(single)) return "Only read-only queries are allowed (SELECT/WITH/EXPLAIN).";
   const forbiddenRegex = new RegExp(`\\b(${FORBIDDEN_KEYWORDS.join("|")})\\b`, "i");
   if (forbiddenRegex.test(single)) return "Query contains blocked keyword(s).";
-  // Block pg_sleep to prevent resource exhaustion
-  if (/\bpg_sleep\b/i.test(single)) return "pg_sleep is not allowed.";
+  // Block pg_sleep family (incl. pg_sleep_for / pg_sleep_until) to prevent resource exhaustion.
+  // \w* so the trailing "_for"/"_until" can't slip past a \b word boundary.
+  if (/\bpg_sleep\w*/i.test(single)) return "pg_sleep is not allowed.";
   return null;
 }
 

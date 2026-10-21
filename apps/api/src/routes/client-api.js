@@ -172,7 +172,16 @@ router.patch("/api/keys/:id", async (req, res) => {
 // ─── Client API: SQL-over-HTTP (/v1/sql) ───
 
 // Blocklist for dangerous SQL operations in /v1/sql
-const SQL_BLOCKLIST = /\b(COPY\b|pg_read_file|pg_write_file|pg_read_binary_file|lo_import|lo_export|dblink|dblink_exec|CREATE\s+EXTENSION|ALTER\s+SYSTEM|pg_terminate_backend|pg_cancel_backend)\b/i;
+const SQL_BLOCKLIST = /\b(COPY\b|pg_read_file|pg_write_file|pg_read_binary_file|pg_ls_dir|pg_stat_file|lo_import|lo_export|lo_get|lo_put|dblink|dblink_exec|CREATE\s+EXTENSION|ALTER\s+SYSTEM|pg_terminate_backend|pg_cancel_backend|truss_internal|pg_authid|pg_shadow)\b/i;
+
+// Comments can smuggle blocked keywords past the regex (e.g. CREATE/**/EXTENSION),
+// so strip SQL comments before matching. Intentionally over-aggressive (deny-list).
+function stripSqlComments(sql) {
+  return String(sql).replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
+}
+function isBlockedSql(sql) {
+  return SQL_BLOCKLIST.test(stripSqlComments(sql));
+}
 
 router.post("/v1/sql", apiKeyAuth, async (req, res) => {
   if (!getCustomerPool(req)) return res.status(500).json({ error: "DATABASE_URL is not set." });
@@ -181,8 +190,8 @@ router.post("/v1/sql", apiKeyAuth, async (req, res) => {
   }
   const sql = typeof req.body?.sql === "string" ? req.body.sql.trim() : "";
   if (!sql) return res.status(400).json({ error: "sql is required." });
-  // Block dangerous operations
-  if (SQL_BLOCKLIST.test(sql)) {
+  // Block dangerous operations (comments stripped first to stop CREATE/**/EXTENSION bypass)
+  if (isBlockedSql(sql)) {
     return res.status(403).json({ error: "Query contains a blocked operation (COPY, pg_read_file, CREATE EXTENSION, ALTER SYSTEM, etc.)." });
   }
   const params = Array.isArray(req.body?.params) ? req.body.params : [];
@@ -242,7 +251,7 @@ router.post("/v1/sql/transaction", apiKeyAuth, async (req, res) => {
   // Blocklist check: reject entire transaction if any statement contains dangerous operations
   for (const stmt of statements) {
     const sql = typeof stmt.sql === "string" ? stmt.sql.trim() : "";
-    if (sql && SQL_BLOCKLIST.test(sql)) {
+    if (sql && isBlockedSql(sql)) {
       return res.status(400).json({ error: "Transaction contains a blocked operation (COPY, pg_read_file, CREATE EXTENSION, ALTER SYSTEM, etc.)." });
     }
   }

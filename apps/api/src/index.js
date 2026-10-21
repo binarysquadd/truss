@@ -70,6 +70,12 @@ if (process.env.NODE_ENV === "production") {
 // ─── Express setup ───
 const app = express();
 
+// Behind a reverse proxy (Coolify/Cloudflare/nginx), trust the hop(s) so req.ip is
+// the real client IP — otherwise express-rate-limit buckets every client under the
+// proxy IP (one attacker locks out all logins) and X-Forwarded-For is unverifiable.
+// Default 1 hop; set TRUST_PROXY_HOPS to match your proxy chain (0 = don't trust).
+app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS ?? 1));
+
 // ─── Cloud overlay hook (open-core composition) ───
 // OSS builds have no ./cloud/ module, so this is a no-op and the app runs as the
 // single-instance core. The hosted (truss-cloud) image overlays ./cloud/index.js,

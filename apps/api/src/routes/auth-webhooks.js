@@ -36,6 +36,12 @@ router.put("/api/auth/webhooks", adminMiddleware, async (req, res) => {
   if (!Array.isArray(webhooks)) return res.status(400).json({ error: "webhooks array is required" });
   const tenantId = req.tenant?.id;
   if (!tenantId) return res.status(401).json({ error: "Authentication required." });
+  // Reject private/internal URLs at store time (SSRF defense-in-depth).
+  for (const hook of webhooks) {
+    if (!hook?.url) continue;
+    try { await assertPublicUrl(hook.url); }
+    catch (e) { return res.status(400).json({ error: `Invalid webhook url: ${e.message}` }); }
+  }
   try {
     const pool = getPool();
     await pool.query(
@@ -111,8 +117,11 @@ export function fireAuthWebhooks(tenantId, event, payload, pool) {
         headers["X-Webhook-Signature"] = crypto.createHmac("sha256", hook.secret).update(body).digest("hex");
       }
 
-      fetchWithTimeout(hook.url, { method: "POST", headers, body }, 10000)
-        .catch((err) => log.warn({ webhook: hook.name, url: hook.url, event, err: err?.message }, "Auth webhook delivery failed"));
+      // SSRF guard at DELIVERY time (not just /test): a stored url could point at
+      // cloud metadata / internal hosts and this fires on every auth event.
+      assertPublicUrl(hook.url)
+        .then(() => fetchWithTimeout(hook.url, { method: "POST", headers, body }, 10000))
+        .catch((err) => log.warn({ webhook: hook.name, url: hook.url, event, err: err?.message }, "Auth webhook delivery skipped/failed"));
     }
   }).catch((err) => log.warn({ tenantId, event, err: err?.message }, "Failed to load auth webhooks for delivery"));
 }

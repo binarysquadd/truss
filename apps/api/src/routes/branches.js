@@ -9,6 +9,7 @@ import {
 } from "../lib/state.js";
 import { ensureInternalSchema, measureStorageSizeBytes, measureAuthMau, writeAuditLog } from "../lib/internal.js";
 import { maskConnectionString } from "../lib/helpers.js";
+import { adminMiddleware } from "../lib/session.js";
 import logger from "../lib/logger.js";
 import { trackFeature } from "../lib/observability.js";
 
@@ -61,7 +62,7 @@ router.get("/api/branches", async (req, res) => {
   }
 });
 
-router.post("/api/branches", async (req, res) => {
+router.post("/api/branches", adminMiddleware, async (req, res) => {
   if (!getPool()) return res.status(500).json({ error: "DATABASE_URL is not set." });
   const label = (req.body?.label || "").trim().slice(0, 60) || `branch_${Date.now()}`;
   const ttlHours = parseInt(req.body?.ttlHours) || 0;
@@ -115,7 +116,7 @@ router.post("/api/branches", async (req, res) => {
   }
 });
 
-router.delete("/api/branches/:id", async (req, res) => {
+router.delete("/api/branches/:id", adminMiddleware, async (req, res) => {
   if (!getPool()) return res.status(500).json({ error: "DATABASE_URL is not set." });
   try {
     await ensureInternalSchema();
@@ -190,7 +191,7 @@ router.get("/api/backups", async (req, res) => {
   }
 });
 
-router.post("/api/backups/snapshot", async (req, res) => {
+router.post("/api/backups/snapshot", adminMiddleware, async (req, res) => {
   if (!getPool()) return res.status(500).json({ error: "DATABASE_URL is not set." });
   if (_activeBackups >= MAX_CONCURRENT_BACKUPS) {
     return res.status(429).json({ error: `Maximum ${MAX_CONCURRENT_BACKUPS} concurrent backups allowed. Please wait for a running backup to finish.` });
@@ -266,7 +267,7 @@ router.post("/api/backups/snapshot", async (req, res) => {
   }
 });
 
-router.post("/api/backups/:id/restore", async (req, res) => {
+router.post("/api/backups/:id/restore", adminMiddleware, async (req, res) => {
   if (!getPool()) return res.status(500).json({ error: "DATABASE_URL is not set." });
   try {
     await ensureInternalSchema();
@@ -299,7 +300,7 @@ router.post("/api/backups/:id/restore", async (req, res) => {
   }
 });
 
-router.delete("/api/backups/:id", async (req, res) => {
+router.delete("/api/backups/:id", adminMiddleware, async (req, res) => {
   if (!getPool()) return res.status(500).json({ error: "DATABASE_URL is not set." });
   try {
     await ensureInternalSchema();

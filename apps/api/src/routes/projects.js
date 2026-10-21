@@ -460,7 +460,12 @@ router.get("/api/projects/by-slug/:slug", async (req, res) => {
       [req.params.slug, tenantId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "Project not found." });
-    return res.json({ project: { ...result.rows[0], service_role_key: decryptKey(result.rows[0].service_role_key) } });
+    // service_role_key bypasses RLS / grants data-plane takeover — only owners/admins may see it.
+    const row = result.rows[0];
+    const role = await getProjectRole(tenantId, row.id, pool);
+    const project = { ...row, service_role_key: undefined };
+    if (role === "owner" || role === "admin") project.service_role_key = decryptKey(row.service_role_key);
+    return res.json({ project });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Failed to get project by slug." });
   }
@@ -493,7 +498,12 @@ router.get("/api/projects/:id", async (req, res) => {
       environments = envResult.rows;
     } catch { /* environments table may not exist yet */ }
 
-    return res.json({ project: { ...result.rows[0], service_role_key: decryptKey(result.rows[0].service_role_key), environments } });
+    // service_role_key bypasses RLS / grants data-plane takeover — only owners/admins may see it.
+    const row = result.rows[0];
+    const role = await getProjectRole(tenantId, row.id, pool);
+    const project = { ...row, service_role_key: undefined, environments };
+    if (role === "owner" || role === "admin") project.service_role_key = decryptKey(row.service_role_key);
+    return res.json({ project });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Failed to get project." });
   }

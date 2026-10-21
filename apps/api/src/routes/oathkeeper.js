@@ -212,7 +212,7 @@ router.get("/api/oathkeeper/version", async (req, res) => {
 
 // ─── Judge endpoint (admin-only — can probe arbitrary URLs) ───
 
-router.post("/api/oathkeeper/judge", async (req, res) => {
+router.post("/api/oathkeeper/judge", adminMiddleware, async (req, res) => {
   if (!requireTenant(req, res)) return;
   if (!OATHKEEPER_PROXY_URL) return res.status(503).json({ error: "OATHKEEPER_PROXY_URL not configured" });
   const { url, method, headers: customHeaders } = req.body || {};
