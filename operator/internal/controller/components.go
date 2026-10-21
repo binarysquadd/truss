@@ -39,7 +39,7 @@ const (
 	apiImageRepo       = "ghcr.io/binarysquadd/truss-api"
 	dashboardImageRepo = "ghcr.io/binarysquadd/truss-dashboard"
 	apiPort            = int32(8787)
-	dashboardPort      = int32(80)
+	dashboardPort      = int32(8080)
 )
 
 // componentLabels are applied to and selected by a component's workload.
@@ -93,6 +93,26 @@ func replicasOf(comp appsv1alpha1.ComponentSpec) int32 {
 func hardenedContainerSecurity() *corev1.SecurityContext {
 	return &corev1.SecurityContext{
 		AllowPrivilegeEscalation: ptr.To(false),
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		// NOTE: runAsNonRoot + readOnlyRootFilesystem intentionally omitted here — some
+		// managed-dependency images (rustfs/valkey/flagd) may default to root; enabling
+		// those needs per-image verification (tracked as a follow-up).
+	}
+}
+
+// managedDepResources is a modest default request/limit set for operator-managed
+// dependency workloads (rustfs/valkey/flagd) so one can't exhaust node resources.
+func managedDepResources() corev1.ResourceRequirements {
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("50m"),
+			corev1.ResourceMemory: resource.MustParse("64Mi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("1"),
+			corev1.ResourceMemory: resource.MustParse("512Mi"),
+		},
 	}
 }
 
@@ -275,10 +295,29 @@ func enforcePodSecurityFloor(tmpl *corev1.PodTemplateSpec) {
 			}
 			cs[i].SecurityContext.Privileged = ptr.To(false)
 			cs[i].SecurityContext.AllowPrivilegeEscalation = ptr.To(false)
+			// Deny capability escalation (e.g. a podTemplate adding SYS_ADMIN/NET_ADMIN).
+			cs[i].SecurityContext.Capabilities = &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}
+			// Block an explicit root request. We do NOT force RunAsNonRoot=true here: that
+			// needs a numeric uid to verify, and the app/nginx images declare a non-numeric
+			// USER (node) — forcing it makes the kubelet refuse to start them. Running as
+			// non-root is the image's responsibility (declare a numeric USER); the floor's
+			// job is to stop a podTemplate from escalating.
+			if cs[i].SecurityContext.RunAsUser != nil && *cs[i].SecurityContext.RunAsUser == 0 {
+				cs[i].SecurityContext.RunAsUser = nil
+			}
 		}
 	}
 	clamp(tmpl.Spec.Containers)
 	clamp(tmpl.Spec.InitContainers)
+	// Reject hostPath volumes (node filesystem escape) from a user podTemplate.
+	kept := tmpl.Spec.Volumes[:0]
+	for _, v := range tmpl.Spec.Volumes {
+		if v.HostPath != nil {
+			continue
+		}
+		kept = append(kept, v)
+	}
+	tmpl.Spec.Volumes = kept
 }
 
 func (r *TrussInstanceReconciler) desiredAPIDeployment(ti *appsv1alpha1.TrussInstance) (*appsv1.Deployment, error) {
@@ -329,8 +368,12 @@ func (r *TrussInstanceReconciler) desiredDashboardDeployment(ti *appsv1alpha1.Tr
 		ObjectMeta: metav1.ObjectMeta{Labels: labels},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{
-				Name:            "dashboard",
-				Image:           dashboardImageRepo + ":" + ti.Spec.Version,
+				Name:  "dashboard",
+				Image: dashboardImageRepo + ":" + ti.Spec.Version,
+				// The dashboard nginx proxies /api,/v1,/realtime to this upstream
+				// (envsubst'd into its config). Operator services are <ti>-api, not
+				// the compose default "truss-api", so inject the real host:port.
+				Env:             []corev1.EnvVar{{Name: "TRUSS_API_UPSTREAM", Value: ti.Name + "-api:8787"}},
 				Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: dashboardPort}},
 				Resources:       resourcesFor(ti.Spec.Components.Dashboard, ti.Spec.Scaling.Profile),
 				ReadinessProbe:  httpGetProbe("/", dashboardPort),

@@ -37,7 +37,7 @@ import (
 // the self-hosted docker-compose runs, so a managed TrussInstance stands up the
 // same stack a BYO deployment would wire by hand.
 const (
-	rustfsImage = "rustfs/rustfs:latest"
+	rustfsImage = "rustfs/rustfs:1.0.3"
 	valkeyImage = "valkey/valkey:8-alpine"
 	flagdImage  = "ghcr.io/open-feature/flagd:v0.11.1"
 
@@ -117,6 +117,9 @@ func (r *TrussInstanceReconciler) managedDeploymentReady(ctx context.Context, ti
 func (r *TrussInstanceReconciler) applyManagedWorkload(ctx context.Context, ti *appsv1alpha1.TrussInstance, name, comp string, container corev1.Container, volumes []corev1.Volume) error {
 	labels := componentLabels(ti, comp)
 	container.SecurityContext = hardenedContainerSecurity()
+	if container.Resources.Limits == nil && container.Resources.Requests == nil {
+		container.Resources = managedDepResources()
+	}
 	replicas := int32(1)
 	dep := &appsv1.Deployment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
