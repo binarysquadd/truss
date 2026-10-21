@@ -69,7 +69,13 @@ func (r *TrussInstanceReconciler) desiredManagedPostgres(ti *appsv1alpha1.TrussI
 		"instances": instances,
 		"storage":   map[string]any{"size": storage},
 		"bootstrap": map[string]any{
-			"initdb": map[string]any{"database": "truss", "owner": "truss"},
+			"initdb": map[string]any{
+				"database": "truss",
+				"owner":    "truss",
+				// Let the app role create the per-tenant RLS roles (anon/authenticated).
+				// postInitSQL runs once, as superuser, right after initdb.
+				"postInitSQL": []any{`ALTER ROLE "truss" CREATEROLE`},
+			},
 		},
 	}
 	// Backups/PITR: wire CNPG's object-store archive (WAL + base backups). This
