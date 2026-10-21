@@ -592,8 +592,8 @@ services:
     depends_on:
       - truss-api
     ports:
-      # Main entry point — users access the dashboard here.
-      - "3000:80"
+      # Main entry point — users access the dashboard here. (unprivileged nginx on :8080)
+      - "3000:8080"
 
   # MCP server — lets an AI agent operate this instance over the Model Context Protocol
   # at http://localhost:8765/mcp. Callers authenticate with a service_role key

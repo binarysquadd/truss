@@ -4,7 +4,7 @@ metadata:
   name: truss-dashboard
 spec:
   selector: { app: truss-dashboard }
-  ports: [{ port: 80, targetPort: 80 }]
+  ports: [{ port: 8080, targetPort: 8080 }]
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -22,12 +22,13 @@ spec:
         - name: dashboard
           image: "{{ .Values.images.dashboard.repository }}:{{ .Values.images.dashboard.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.images.pullPolicy }}
-          # Standard nginx:alpine master starts as root to bind :80 and spawn
-          # The nginx image starts as root to chown its cache dirs + bind :80, then
-          # drops to the nginx worker user — so it needs default caps (CHOWN/SETUID).
-          # Dropping ALL caps or runAsNonRoot breaks startup.
+          # Unprivileged nginx (nginxinc/nginx-unprivileged): runs as uid 101 on :8080
+          # and needs no Linux capabilities, so it can be fully hardened.
           securityContext:
             allowPrivilegeEscalation: false
-          ports: [{ containerPort: 80 }]
-          readinessProbe: { httpGet: { path: /, port: 80 }, initialDelaySeconds: 5, periodSeconds: 10 }
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+            seccompProfile: { type: RuntimeDefault }
+          ports: [{ containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /, port: 8080 }, initialDelaySeconds: 5, periodSeconds: 10 }
           resources: {{- toYaml .Values.resources.small | nindent 12 }}
