@@ -25,6 +25,7 @@ import { resolveApiKey } from "./lib/api-keys.js";
 import { requestLogger, globalErrorHandler, cleanupOldLogs } from "./lib/observability.js";
 import { metricsMiddleware, metricsHandler } from "./lib/metrics.js";
 import { seedDevTenants } from "./lib/dev-tenants.js";
+import { setupTenantRls } from "./lib/tenant-db.js";
 import swaggerUi from "swagger-ui-express";
 import { openApiBase } from "./docs/openapi-base.js";
 // NOTE: `express-rate-limit` must be installed: npm i express-rate-limit
@@ -723,6 +724,15 @@ if (process.env.TRUSS_MIGRATE_ONLY === "true") {
 // ─── Bootstrap internal schema before accepting requests ───
 ensureInternalSchema().then(async () => {
   logger.info("Truss internal schema ready");
+
+  // Ensure the RLS roles (anon/authenticated) exist on the MAIN database too, so the
+  // data API (/v1/db) works in single-DB self-host — not just in provisioned tenant DBs.
+  // Fail-soft: needs CREATEROLE on the login role (superuser in compose/chart; granted via
+  // CNPG postInitSQL in the managed operator). If absent, applyRlsContext fails closed.
+  if (getPool()) {
+    try { await setupTenantRls(getPool(), "platform"); }
+    catch (err) { logger.warn({ err: err.message }, "platform RLS role setup skipped"); }
+  }
 
   // Seed dev tenants when TRUSS_DEV_MODE is enabled
   if (process.env.TRUSS_DEV_MODE === "true" || process.env.NODE_ENV !== "production") {

@@ -153,7 +153,7 @@ async function runTenantBaseline(dbName) {
  * self-hosters on a superuser DATABASE_URL get it for free). If creation is not permitted we log
  * loudly and leave the roles absent — applyRlsContext then FAILS CLOSED, never silently as owner.
  */
-async function setupTenantRls(pool, dbName) {
+export async function setupTenantRls(pool, dbName) {
   try {
     // Create the two non-owner roles (idempotent; ignore "already exists").
     await pool.query(`
