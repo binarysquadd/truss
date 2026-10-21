@@ -37,4 +37,11 @@ deploy/terraform/cloudflare/terraform.tfvars
 deploy/terraform/cloudflare/terraform.tfstate
 deploy/terraform/cloudflare/terraform.tfstate.backup
 deploy/terraform/cloudflare/.terraform/
-# .terraform.lock.hcl is intentionally committed — locks provider versions for reproducible CI
+# bootstrap state/cache — same rules as cloudflare above (never commit tfstate or the
+# provider cache). The canonical terraform SOURCE lives in shipyard/apps/truss/deploy;
+# this dir is only leftover local state/cache from a past run.
+deploy/terraform/bootstrap/terraform.tfstate
+deploy/terraform/bootstrap/terraform.tfstate.backup
+deploy/terraform/bootstrap/.terraform/
+deploy/terraform/bootstrap/.terraform.lock.hcl
+# .terraform.lock.hcl is intentionally committed where real tf SOURCE lives (not here)
