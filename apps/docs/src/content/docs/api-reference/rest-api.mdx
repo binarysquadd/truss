@@ -18,7 +18,7 @@ curl http://localhost:8787/v1/db/users \
   -H "apikey: truss_pk_your_key"
 ```
 
-Two key types: `anon` (prefix `truss_pk_`) respects RLS, `service_role` (prefix `truss_sk_`) bypasses RLS. See [API Keys](../guides/api-keys/).
+Two key types: `anon` (prefix `truss_pk_`) respects RLS, `service_role` (prefix `truss_sk_`) bypasses non-`FORCE` RLS. A bare `anon` key maps to the Postgres `anon` role — **SELECT-only and default-deny**: without a JWT it can only read, and only rows a policy allows. Adding a verified JWT via `Authorization: Bearer` promotes the request to the `authenticated` role (full DML, still RLS-enforced). See [API Keys](../guides/api-keys/).
 
 ## Data API
 
@@ -64,11 +64,11 @@ Max 20 statements. Rolls back on any failure.
 
 | Method | Endpoint | Description | Key type |
 |--------|----------|-------------|----------|
-| `GET` | `/v1/db/:table` | Select rows | anon or service_role |
-| `POST` | `/v1/db/:table` | Insert row(s) | anon or service_role |
-| `PATCH` | `/v1/db/:table` | Update rows (filter required) | anon or service_role |
-| `DELETE` | `/v1/db/:table` | Delete rows (filter required) | anon or service_role |
-| `POST` | `/v1/db/rpc/:function` | Call a Postgres function | anon or service_role |
+| `GET` | `/v1/db/:table` | Select rows | anon (RLS-enforced) or service_role |
+| `POST` | `/v1/db/:table` | Insert row(s) | authenticated (anon key + JWT) or service_role — a bare anon key is read-only |
+| `PATCH` | `/v1/db/:table` | Update rows (filter required) | authenticated (anon key + JWT) or service_role — a bare anon key is read-only |
+| `DELETE` | `/v1/db/:table` | Delete rows (filter required) | authenticated (anon key + JWT) or service_role — a bare anon key is read-only |
+| `POST` | `/v1/db/rpc/:function` | Call a Postgres function | authenticated (anon key + JWT) or service_role — a bare anon key is read-only |
 
 #### Query parameters for GET
 

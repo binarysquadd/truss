@@ -3,9 +3,41 @@ title: Authorization
 description: Fine-grained permissions with relation-based access control (ReBAC), RBAC, and ACL.
 ---
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
 Truss provides relation-based access control (ReBAC) powered by Ory Keto. This lets you define who can do what to which resource using relation tuples — a flexible model that handles RBAC, ReBAC, and ACL patterns. The dashboard includes a permission checker playground, role matrix, relationship graph, OPL editor with version history, and model templates.
+
+Keto answers "is subject X allowed to do Y on resource Z?" for your application logic. It is separate from the **data API authorization** layer below, which enforces PostgreSQL Row-Level Security on every `/v1/db` and `/v1/rpc` call.
+
+---
+
+## Data API authorization (Row-Level Security)
+
+Every Data API request (`/v1/db/*` and `/v1/rpc/*`) runs under a PostgreSQL role chosen from the API key and the optional JWT. RLS is enforced by Postgres itself, so the database is the final authority — not the application layer.
+
+| Role | How to reach it | Capabilities | RLS |
+|------|-----------------|--------------|-----|
+| `anon` | A bare `anon` key (`truss_pk_`) with no `Authorization` header | **SELECT only**, default-deny | Enforced. A table with RLS on and no matching policy returns nothing |
+| `authenticated` | An `anon` key **plus** a verified JWT via `Authorization: Bearer <jwt>` | Full DML (SELECT/INSERT/UPDATE/DELETE) | Enforced. Policies read `request.jwt.sub` / `request.jwt.claims` |
+| `service_role` | A `service_role` key (`truss_sk_`) | Runs as the database owner | Bypasses non-`FORCE` RLS |
+
+### `anon` — public / embeddable key
+
+The `anon` key is safe to ship in client-side code. On its own it maps to the Postgres `anon` role, which is **SELECT-only and default-deny**: a table with RLS enabled and no policy that matches returns zero rows. Design your public surface by writing explicit `SELECT` policies for the `anon` role.
+
+### `authenticated` — anon key + verified JWT
+
+Pass a verified user JWT in the `Authorization: Bearer` header alongside the `anon` key. Truss promotes the request to the `authenticated` role, decodes the token, and sets the `request.jwt.claims` and `request.jwt.sub` session GUCs. Your policies read these the same way Supabase's `auth.uid()` does — for example `USING (user_id = current_setting('request.jwt.sub', true)::uuid)`. The request retains full DML, still gated by RLS.
+
+### `service_role` — the owner key
+
+A `service_role` key runs as the database owner and **bypasses non-`FORCE` RLS** entirely. Use it only server-side. For tables that must stay protected even from the owner, mark their RLS `FORCE`.
+
+<Aside type="caution">
+RLS enforcement **fails closed**: if the `anon` / `authenticated` roles are not provisioned in the database, the Data API refuses the request rather than falling back to an unrestricted connection.
+</Aside>
+
+Run the [RLS advisor](./database/#rls-advisor) (`GET /api/advisor/rls`) to flag any client-exposed public table whose RLS is disabled or policy-less before it leaks data.
 
 ## Setup
 

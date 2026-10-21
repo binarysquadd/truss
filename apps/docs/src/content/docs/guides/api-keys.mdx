@@ -10,20 +10,24 @@ Truss uses API keys to authenticate client API requests. Every `/v1/*` endpoint 
 | Type | Prefix | RLS behavior | Use case |
 |------|--------|-------------|----------|
 | `anon` | `truss_pk_` | Respects RLS policies | Client-side apps, public-facing |
-| `service_role` | `truss_sk_` | Bypasses RLS (runs as `postgres` role) | Server-side, admin scripts, CLI |
+| `service_role` | `truss_sk_` | Bypasses non-FORCE RLS; runs as the database owner/login role | Server-side, admin scripts, CLI |
 
 ### anon keys
 
 Anon keys are safe to expose in client-side code. They respect PostgreSQL Row-Level Security (RLS) policies, so users can only access data their policies allow.
 
+A bare `anon` key (no `Authorization` header) maps to the Postgres `anon` role, which is **SELECT-only and default-deny**: it can only read, and only rows a matching policy allows — a table with RLS on and no policy returns nothing.
+
 When a request uses an anon key with a JWT in the Authorization header, Truss:
 1. Decodes the JWT payload
 2. Sets `request.jwt.claims` and `request.jwt.sub` as Postgres session config
-3. Switches to the `authenticated` role
+3. Switches to the `authenticated` role (full DML, still RLS-enforced)
+
+RLS enforcement **fails closed**: if the `anon` / `authenticated` roles are not provisioned in the database, the Data API refuses the request rather than running on an unrestricted connection.
 
 ### service_role keys
 
-Service role keys bypass RLS entirely and run queries as the `postgres` role. Never expose these in client-side code. Use them for:
+Service role keys bypass non-`FORCE` RLS and run queries as the database owner/login role. Never expose these in client-side code. Use them for:
 - Server-side API calls
 - Admin scripts and migrations
 - Management API endpoints (which require service_role)

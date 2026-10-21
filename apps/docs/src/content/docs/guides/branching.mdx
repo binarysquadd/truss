@@ -7,6 +7,12 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 Truss lets you create isolated copies of your database for testing, development, or migration verification. Branches are full PostgreSQL databases created from a template, giving you an exact copy of schema and data. Backups use `pg_dump` and support point-in-time recovery.
 
+:::note[Admin session required]
+Branch create/delete and backup snapshot/restore/delete require an admin dashboard session (a
+`truss_session` cookie for an admin identity). Read-only operations — listing branches and
+backups, switching to a branch — do not.
+:::
+
 ## Branching
 
 ### How It Works
@@ -121,7 +127,7 @@ Branches are unlimited in self-hosted Truss — create as many as your disk spac
 ### Create a Backup
 
 ```bash
-curl -X POST http://localhost:8787/api/backups \
+curl -X POST http://localhost:8787/api/backups/snapshot \
   -H "Content-Type: application/json" \
   -d '{"label": "pre-migration-backup"}'
 ```
@@ -186,7 +192,7 @@ Combining branches, backups, and migrations gives you a safe deployment workflow
 
 ```bash
 # 1. Create a backup before migration
-curl -X POST http://localhost:8787/api/backups \
+curl -X POST http://localhost:8787/api/backups/snapshot \
   -H "Content-Type: application/json" \
   -d '{"label": "pre-v2-migration"}'
 
@@ -236,5 +242,5 @@ The **Database** panel provides:
 | `POST` | `/api/branches` | Create a new branch |
 | `DELETE` | `/api/branches/:id` | Delete a branch (drops database) |
 | `GET` | `/api/backups` | List all backups |
-| `POST` | `/api/backups` | Create a new backup |
+| `POST` | `/api/backups/snapshot` | Create a new backup |
 | `POST` | `/api/backups/:id/restore` | Restore backup to a new branch |

@@ -98,3 +98,57 @@ a gracefully-stopped primary drain first, so a clean shutdown can take longer to
 fail over than a hard crash. Tune `failoverDelay` / `switchoverDelay` if you need
 faster promotion.
 :::
+
+## Option 3 — Operator-managed HA
+
+The [Truss operator](https://github.com/binarysquadd/truss) wires all three tiers of HA from a
+single `TrussInstance` custom resource, so you don't hand-assemble the CNPG cluster, the app
+Deployments, and the disruption budgets yourself.
+
+### Managed Postgres HA
+
+Set `dependencies.postgres.mode: managed` and the operator provisions a CloudNativePG cluster
+for you — the same streaming-replica + automatic-failover setup as Option 2, without authoring
+the `Cluster` manifest. The instance count follows the app-tier `scaling.profile`:
+
+```yaml
+apiVersion: apps.truss.binarysquad.org/v1beta1
+kind: TrussInstance
+metadata:
+  name: truss
+spec:
+  scaling:
+    profile: medium        # dev → 1 instance; medium / large → a 3-instance HA cluster
+  dependencies:
+    postgres:
+      mode: managed        # operator provisions a CloudNativePG cluster
+```
+
+The `dev` profile gets a single Postgres instance; `medium` and `large` get a 3-instance HA
+cluster. Pair it with `spec.backup.enabled` for CNPG scheduled backups and PITR.
+
+### App-tier HA
+
+Scale and protect the API and dashboard tiers directly on the CR:
+
+```yaml
+spec:
+  components:
+    api:
+      replicas: 3
+    dashboard:
+      replicas: 3
+  resilience:
+    pdb: {}               # a PodDisruptionBudget per component
+    topologySpread: true  # spread pods across zones / nodes
+```
+
+`components.{api,dashboard}.replicas` set the pod counts, `resilience.pdb` adds a
+PodDisruptionBudget per component so voluntary disruptions can't take a tier down, and
+`resilience.topologySpread` spreads pods across zones and nodes.
+
+### The operator itself runs HA
+
+The operator Deployment ships with **2 replicas and leader election**, so one replica is always
+active while the other stands by, plus its own PodDisruptionBudget (`minAvailable: 1`). A node
+drain or a single pod failure never leaves your `TrussInstance` resources unreconciled.

@@ -48,6 +48,12 @@ curl -X DELETE "http://localhost:8787/api/storage/buckets/my-bucket?force=true"
 
 ## Objects
 
+:::note[Object keys]
+Object keys are sanitized server-side. A key cannot start with `/`, contain `.` or `..` path
+segments, or include control characters, and it is capped at 1024 characters. A key that
+violates these rules is rejected with `400 Invalid object key`.
+:::
+
 ### List objects
 
 ```bash
@@ -150,11 +156,17 @@ Set access policies on buckets (e.g., public read):
 # Get current policy
 curl http://localhost:8787/api/storage/buckets/my-bucket/policy
 
-# Set policy
+# Set policy (scoped principal — wildcard/anonymous "*" is rejected)
 curl -X PUT http://localhost:8787/api/storage/buckets/my-bucket/policy \
   -H "Content-Type: application/json" \
-  -d '{"policy": {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": "*", "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::my-bucket/*"]}]}}'
+  -d '{"policy": {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"AWS": ["arn:aws:iam:::user/app-reader"]}, "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::my-bucket/*"]}]}}'
 ```
+
+:::caution
+Wildcard or anonymous principals (`"Principal": "*"`) are **rejected** with `400`. To serve
+assets publicly, issue a [presigned download URL](#download-via-presigned-url) instead of
+opening the bucket to everyone.
+:::
 
 ## Object Metadata Editor
 

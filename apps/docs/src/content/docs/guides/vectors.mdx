@@ -7,6 +7,12 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 Truss includes built-in support for pgvector — the PostgreSQL extension for vector similarity search. Store embeddings, create indexes, and run similarity queries from the dashboard or API.
 
+:::note[Admin session required]
+Enabling pgvector (`POST /api/vectors/enable`) and creating or deleting collections and
+indexes require an admin dashboard session (a `truss_session` cookie for an admin identity).
+Checking status, listing/browsing collections, and running similarity search do not.
+:::
+
 ## Setup
 
 pgvector must be installed in your PostgreSQL instance. Most managed Postgres providers include it. For self-hosted Postgres:
@@ -219,7 +225,7 @@ conn.commit()
 # Insert a vector embedding via Truss SQL API
 curl -X POST \
   ${TRUSS_API_URL}/v1/sql \
-  -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
+  -H "apikey: ${SERVICE_ROLE_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "INSERT INTO embeddings (content, embedding) VALUES ($1, $2::vector)",
@@ -229,7 +235,7 @@ curl -X POST \
 # Similarity search
 curl -X POST \
   ${TRUSS_API_URL}/v1/sql \
-  -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
+  -H "apikey: ${SERVICE_ROLE_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "SELECT id, content, embedding <=> $1::vector AS distance FROM embeddings ORDER BY embedding <=> $1::vector LIMIT 10",
@@ -239,7 +245,7 @@ curl -X POST \
 # Create HNSW index
 curl -X POST \
   ${TRUSS_API_URL}/v1/sql \
-  -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
+  -H "apikey: ${SERVICE_ROLE_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "CREATE INDEX ON embeddings USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)"

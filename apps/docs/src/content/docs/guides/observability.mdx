@@ -37,7 +37,7 @@ on you. You can wire it into whatever you already run, or spin up a bundled Graf
 If you run `kube-prometheus-stack`, flip on the chart's opt-in artifacts (all default-off):
 
 ```bash
-helm upgrade truss ./charts/truss \
+helm upgrade truss oci://ghcr.io/binarysquadd/charts/truss \
   --set observability.serviceMonitor.enabled=true \
   --set observability.prometheusRule.enabled=true \
   --set observability.grafanaDashboard.enabled=true \

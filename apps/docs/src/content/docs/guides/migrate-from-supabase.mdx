@@ -251,17 +251,19 @@ WHERE schemaname = 'public'
 ORDER BY tablename, policyname;
 ```
 
-**One difference:** Supabase provides helper functions like `auth.uid()` and `auth.role()` that reference the JWT claims of the current request. These functions do not exist in Truss. You have two options:
+**One difference:** Supabase provides helper functions like `auth.uid()` and `auth.role()` that reference the JWT claims of the current request. These functions do not exist in Truss, but Truss natively populates the same session variables: on every authenticated Data API request it sets `request.jwt.claims` and `request.jwt.sub`, and it ships built-in `anon` and `authenticated` roles (the `anon` role is SELECT-only). You have two options:
 
-1. **Create equivalent functions** that read from a session variable:
+1. **Create equivalent functions** that read from the session variable Truss sets:
 
 ```sql
 CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS $$
-  SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid;
+  SELECT NULLIF(current_setting('request.jwt.sub', true), '')::uuid;
 $$ LANGUAGE sql STABLE;
 ```
 
 2. **Rewrite policies** to use standard PostgreSQL session variables or role-based checks.
+
+After importing, run the [RLS advisor](./database/#rls-advisor) (`GET /api/advisor/rls`) to confirm no client-exposed public table was left with RLS disabled or policy-less.
 
 ---
 

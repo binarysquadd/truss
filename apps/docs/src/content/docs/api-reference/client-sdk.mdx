@@ -37,6 +37,8 @@ async function truss(path: string, options: RequestInit = {}) {
 
 You can wrap this helper in a module and import it anywhere in your app. For server-side usage, use a `service_role` key (`truss_sk_`). For client-side (browser) usage, use the `anon` key (`truss_pk_`).
 
+A browser `anon` key is **read-only** (SELECT-only, RLS-enforced) unless the request also carries a verified user JWT in the `Authorization: Bearer` header, which promotes it to the `authenticated` role for full DML. See [API Keys](../guides/api-keys/).
+
 ## Querying data
 
 ```typescript
@@ -244,9 +246,15 @@ const status = await fetch(`${TRUSS_URL}/v1/status`, {
 
 console.log(`Database: ${status.database.size_gb} GB`);
 console.log(`Tables: ${status.database.table_count}`);
-console.log(`Auth MAU: ${status.auth.mau}`);
-console.log(`Storage: ${status.storage.size_gb} GB`);
+console.log(`Schemas: ${status.database.schema_count}`);
+console.log(`Projects: ${status.resources.projects.total}`);
+console.log(`Active API keys: ${status.resources.api_keys.active}`);
+console.log(`Active branches: ${status.resources.branches.active}`);
+console.log(`Storage configured: ${status.integrations.storage.configured}`);
+console.log(`Auth configured: ${status.integrations.auth.configured}`);
 ```
+
+The response groups data under `platform`, `database` (`size_bytes`, `size_gb`, `table_count`, `schema_count`), `plan`, `resources` (`projects`, `api_keys`, `branches`, `backups`, `webhooks`, `realtime_subscriptions`), and `integrations` (`auth`, `authz`, `oauth2`, `gateway`, `storage`, `cache` — each with a `configured` flag). `/v1/status` requires a `service_role` key.
 
 ## Error handling
 

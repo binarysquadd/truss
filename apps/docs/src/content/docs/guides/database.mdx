@@ -140,12 +140,15 @@ curl -X POST http://localhost:8787/v1/db/rpc/my_function \
 
 ## Row-Level Security (RLS)
 
-When using an `anon` key, Truss sets the Postgres role to `authenticated` and passes JWT claims via `set_config`. Your RLS policies can reference:
+Every `/v1/db` and `/v1/rpc` request runs inside a transaction under a Postgres role, so your RLS policies are enforced:
 
-- `current_setting('request.jwt.claims', true)` — full JWT payload
-- `current_setting('request.jwt.sub', true)` — the `sub` claim (user ID)
+- An **`anon` key with no token** runs as the `anon` role — RLS-enforced, **SELECT-only**, and **default-deny** (a table with RLS enabled but no policy returns nothing).
+- Attach a verified JWT via `Authorization: Bearer <jwt>` and the request runs as **`authenticated`** (full DML, still RLS-enforced), with the claims available to policies:
+  - `current_setting('request.jwt.claims', true)` — full JWT payload (JSON)
+  - `current_setting('request.jwt.sub', true)` — the `sub` claim (user ID), Supabase `auth.uid()` style
+- A **`service_role` key** runs as the database **owner** and bypasses **non-FORCE** RLS (a table with `FORCE ROW LEVEL SECURITY` still applies).
 
-With a `service_role` key, RLS is bypassed entirely (role is set to `postgres`).
+The data plane **fails closed**: if the `anon`/`authenticated` roles aren't provisioned, the request is rejected rather than run as the owner. Use the [RLS advisor](#rls-advisor) to catch client-exposed tables that have RLS disabled.
 
 ## SQL Workbench
 
@@ -203,6 +206,11 @@ curl -X POST http://localhost:8787/api/branches \
 
 - **label** — a human-readable name for the branch (max 60 characters)
 - **ttlHours** — optional time-to-live in hours; the branch auto-expires after this duration (0 = no expiry)
+
+:::note[Admin session required]
+Creating and deleting branches require an admin dashboard session (a `truss_session` cookie
+for an admin identity). Listing branches and switching to one do not.
+:::
 
 ### Listing branches
 
@@ -262,12 +270,18 @@ Truss provides backup management through the dashboard and API. Backups use `pg_
 ### Creating a backup
 
 ```bash
-curl -X POST http://localhost:8787/api/backups \
+curl -X POST http://localhost:8787/api/backups/snapshot \
   -H "Content-Type: application/json" \
   -d '{"label": "pre-migration-backup"}'
 ```
 
 Up to 2 backups can run concurrently. Additional requests are queued or rejected.
+
+:::note[Admin session required]
+Creating, restoring, and deleting backups — like creating and deleting branches — require an
+admin dashboard session (a `truss_session` cookie for an admin identity). Listing and reading
+branches or backups do not.
+:::
 
 ### Listing backups
 
@@ -329,6 +343,35 @@ The partitioning advisor analyzes your tables and recommends partitioning strate
 - **Common query patterns** — suggests partition keys based on date columns or category columns
 
 Access it from **Database > Partitioning** in the dashboard.
+
+## RLS advisor
+
+The RLS advisor scans your `public` schema for tables that a client key could read without protection. It flags any table reachable by the `anon` / `authenticated` roles (a `GRANT` exists) that has RLS **disabled** or **no policy** — a public API key could otherwise read every row.
+
+```bash
+curl http://localhost:8787/api/advisor/rls \
+  -H "Cookie: truss_session=your-session-token"
+# { "ok": true, "scanned": 14, "findings": [] }
+```
+
+The endpoint requires an admin dashboard session. Each finding is reported at level `error` with the offending `table` and a `detail` describing the fix:
+
+```json
+{
+  "ok": false,
+  "scanned": 14,
+  "findings": [
+    {
+      "level": "error",
+      "rule": "rls-missing-on-exposed-table",
+      "table": "public.profiles",
+      "detail": "Reachable by the anon/authenticated client roles but RLS is DISABLED — every row is readable via a client key. Fix: ALTER TABLE ENABLE ROW LEVEL SECURITY, then add a policy."
+    }
+  ]
+}
+```
+
+`ok` is `true` only when `findings` is empty. See [Data API authorization](./authorization/#data-api-authorization-row-level-security) for how the `anon` / `authenticated` roles map to API keys.
 
 ## RLS Debugger
 

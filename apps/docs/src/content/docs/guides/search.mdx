@@ -27,6 +27,12 @@ The easiest way to enable search is via the dashboard. Navigate to **Search** an
 
 ### Via API
 
+:::note[Admin session required]
+`POST /api/search/setup` and `DELETE /api/search/setup` require an admin dashboard session (a
+`truss_session` cookie for an admin identity). The read-only inspection endpoints and the
+search playground do not.
+:::
+
 ```bash
 curl -X POST http://localhost:8787/api/search/setup \
   -H "Content-Type: application/json" \
@@ -194,7 +200,7 @@ for row in results:
 # Full-text search via Truss SQL API
 curl -X POST \
   ${TRUSS_API_URL}/v1/sql \
-  -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
+  -H "apikey: ${SERVICE_ROLE_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "SELECT id, title, ts_rank(search_vector, query) AS rank FROM articles, plainto_tsquery('\''english'\'', $1) query WHERE search_vector @@ query ORDER BY rank DESC LIMIT 20",

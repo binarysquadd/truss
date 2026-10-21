@@ -3,7 +3,7 @@ title: Configuration
 description: Environment variables reference for the Truss API server.
 ---
 
-All configuration is via environment variables in the repo-root `.env` (the API loads it from the project root). Copy from `.env.example` to get started.
+All configuration is via environment variables in the repo-root `.env` (the API loads it from the project root). For local development, copy `.env.example` to `.env`. For a self-hosted deployment, copy `.env.selfhosted.example` to `.env.selfhosted` and pass it with `--env-file .env.selfhosted`.
 
 ## Required
 
@@ -37,7 +37,7 @@ Required for user authentication. Without these, the dashboard runs in dev mode 
 | `TRUSS_BOOTSTRAP_ADMIN` | Seed a default admin on first boot (set `false` to disable) | `true` |
 | `TRUSS_BOOTSTRAP_ADMIN_EMAIL` | Email for the seeded first-boot admin | `admin@truss.local` |
 | `TRUSS_BOOTSTRAP_ADMIN_PASSWORD` | Password for the seeded admin (blank = a random one is generated and printed to the API logs) | (none; blank → a random password is generated and logged) |
-| `TRUSS_DEMO_MODE` | Enable anonymous read-only demo access via the `X-Demo: true` header (rate-limited, mutations blocked). Security-relevant — leave off unless you intend a public demo. | `false` |
+| `TRUSS_DEMO_MODE` | **Cloud only** — not read by the open-source API. Anonymous read-only demo access is a Truss Cloud feature; setting this on a self-hosted install has no effect. | `false` |
 
 ### First-boot admin
 
@@ -119,6 +119,19 @@ Cache panel reports "not configured" and the rest of Truss runs normally.
 
 `VALKEY_PASSWORD` is the cache service's own auth and is unrelated to the dashboard
 login. The bundled Compose and Helm setups generate it for you.
+
+## Feature Flags (flagd)
+
+Optional. Powers the Feature Flags panel, which evaluates flags against a
+[flagd](https://flagd.dev) instance. Without these, Truss falls back to the default flagd
+address (`localhost:8013`); if nothing is running there the panel reports it as unreachable
+and the rest of Truss runs normally.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `FLAGD_HOST` | flagd hostname | `localhost` |
+| `FLAGD_PORT` | flagd port (gRPC/HTTP evaluation API) | `8013` |
+| `FLAGD_URL` | Full flagd evaluation URL; overrides host/port when set | (derived from host/port) |
 
 ## Observability
 
