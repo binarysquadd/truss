@@ -6,7 +6,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: trussinstance-v1beta1-sample
 spec:
-  version: "0.2.0"
+  version: "0.4.0"
   # v1beta1 renames publicURL -> host. Applying this and reading it back as
   # v1alpha1 (kubectl get trussinstance.v1alpha1 ...) shows it as publicURL,
   # proving the conversion webhook round-trips.
