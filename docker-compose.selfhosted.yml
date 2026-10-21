@@ -190,9 +190,9 @@ services:
               url: file:///tmp/kratos/identity.schema.json
         secrets:
           cookie:
-            - "${KRATOS_COOKIE_SECRET:-change-me-cookie-secret-32chars!}"
+            - "${KRATOS_COOKIE_SECRET:?KRATOS_COOKIE_SECRET is required - generate with openssl rand -hex 16}"
           cipher:
-            - "${KRATOS_CIPHER_SECRET:-change-me-cipher-secret-32chars!}"
+            - "${KRATOS_CIPHER_SECRET:?KRATOS_CIPHER_SECRET is required - generate with openssl rand -hex 16}"
         log:
           level: info
           format: json
@@ -380,7 +380,7 @@ services:
   # for direct bucket management; the S3 API (9000) is internal to Docker.
 
   rustfs:
-    image: rustfs/rustfs:latest
+    image: rustfs/rustfs:1.0.3
     restart: unless-stopped
     # RustFS entrypoint serves RUSTFS_VOLUMES on :9000 (console :9001) with no args.
     environment:

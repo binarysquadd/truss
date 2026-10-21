@@ -26,7 +26,15 @@ ENV VITE_API_BASE_URL=
 RUN npm run build --workspace=@truss/dashboard
 
 # ── Stage 2: Serve ──
-FROM nginx:alpine
+# Unprivileged nginx: runs as uid 101 on :8080 and needs no Linux capabilities,
+# so it works under a drop-ALL-caps / non-root pod security context.
+FROM nginxinc/nginx-unprivileged:alpine
 COPY --from=build /app/apps/dashboard/dist /usr/share/nginx/html
-COPY selfhosted/nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
+# The nginx:alpine entrypoint envsubst's /etc/nginx/templates/*.template into
+# /etc/nginx/conf.d/. TRUSS_API_UPSTREAM defaults to the compose service name;
+# the operator overrides it with the real <ti>-api:8787 at runtime. The FILTER
+# limits substitution to our var so nginx's own $host/$uri/etc. are left intact.
+ENV TRUSS_API_UPSTREAM=truss-api:8787
+ENV NGINX_ENVSUBST_FILTER=TRUSS_API_UPSTREAM
+COPY selfhosted/nginx.conf /etc/nginx/templates/default.conf.template
+EXPOSE 8080
