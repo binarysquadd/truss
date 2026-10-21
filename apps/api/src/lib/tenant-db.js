@@ -134,10 +134,56 @@ async function runTenantBaseline(dbName) {
     } catch {
       log.warn({ dbName }, "pgvector extension not available — skipping");
     }
+    await setupTenantRls(tenantPool, dbName);
     log.info({ dbName }, "Tenant baseline applied");
   } catch (err) {
     log.error({ err: err.message, dbName }, "Failed to apply tenant baseline");
     throw err;
+  }
+}
+
+/**
+ * Set up the RLS role model in a tenant database (Supabase-style):
+ *   - anon          : public/embeddable key — RLS applies, SELECT-only by default
+ *   - authenticated : logged-in user (anon key + a verified Kratos JWT) — RLS applies, full DML
+ *   - service_role  : runs as the DB owner (this login role) and bypasses non-FORCE RLS
+ * The data-plane (/v1/db, /v1/rpc) SET ROLEs to anon/authenticated so tenant RLS policies are
+ * enforced; without a policy, RLS denies (default-deny). Roles are cluster-wide, so creation is
+ * idempotent. Needs CREATEROLE on the login role (the operator grants it via CNPG postInitSQL;
+ * self-hosters on a superuser DATABASE_URL get it for free). If creation is not permitted we log
+ * loudly and leave the roles absent — applyRlsContext then FAILS CLOSED, never silently as owner.
+ */
+async function setupTenantRls(pool, dbName) {
+  try {
+    // Create the two non-owner roles (idempotent; ignore "already exists").
+    await pool.query(`
+      DO $$ BEGIN
+        CREATE ROLE anon NOLOGIN;
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN
+        CREATE ROLE authenticated NOLOGIN;
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    `);
+    // Let the login (owner) role switch into them, and give them schema access.
+    // Table privileges are granted so that RLS — not a missing GRANT — is the gate.
+    await pool.query(`
+      GRANT anon, authenticated TO CURRENT_USER;
+      GRANT USAGE ON SCHEMA public TO anon, authenticated;
+      GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
+      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
+      GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO anon;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO authenticated;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO authenticated;
+    `);
+    log.info({ dbName }, "RLS roles (anon/authenticated) ready");
+  } catch (err) {
+    // 42501 = insufficient_privilege (no CREATEROLE). Don't fail provisioning, but make it loud:
+    // the data-plane fails closed until the roles exist.
+    log.error(
+      { err: err.message, code: err.code, dbName },
+      "RLS role setup failed — anon/authenticated absent; data-plane will reject until the login role has CREATEROLE (operator grants this via CNPG postInitSQL)"
+    );
   }
 }
 

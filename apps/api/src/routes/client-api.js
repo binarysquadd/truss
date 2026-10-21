@@ -21,26 +21,54 @@ export const router = express.Router();
 
 // ─── Helpers ───
 
-// RLS passthrough: set JWT claims so Postgres RLS policies can read them.
-// IMPORTANT: JWT signature verification MUST happen in the auth middleware (apiKeyAuth)
-// BEFORE this function is called. We only decode the payload here to pass claims to
-// Postgres session vars. If the request has no verified tenant, we skip setting claims
-// entirely to avoid trusting unverified JWTs.
+// Applies the per-request DB role so tenant RLS policies are enforced on the data-plane:
+//   service_role        -> runs as the DB owner (this login role); bypasses non-FORCE RLS
+//   anon key + Bearer JWT -> SET ROLE authenticated + request.jwt.claims GUC (policies read it)
+//   anon key, no JWT     -> SET ROLE anon
+// MUST run inside a transaction on a DEDICATED client (SET ROLE is connection-scoped).
+// FAILS CLOSED: if the role switch errors (e.g. anon/authenticated not provisioned — the login
+// role lacks CREATEROLE), this throws and the caller rejects the request. It never silently
+// runs the query as the table owner, which would bypass RLS entirely.
+// NOTE: the JWT is decoded, not verified, here — signature verification is the auth layer's job.
 async function applyRlsContext(client, req) {
-  // Guard: only set RLS claims when the request has been authenticated (tenant resolved)
-  if (!req.tenant && !req.apiKey) return;
+  const keyType = req.apiKey?.keyType;
+  if (keyType === "service_role") return; // owner role; bypasses non-FORCE RLS by design
+
   const jwt = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  if (jwt && req.apiKey.keyType === "anon") {
-    // Decode payload — signature was already verified by auth middleware upstream
+  if (jwt) {
+    let payload;
     try {
-      const payload = JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString());
-      await client.query(`SELECT set_config('request.jwt.claims', $1, true)`, [JSON.stringify(payload)]);
-      if (payload.sub) await client.query(`SELECT set_config('request.jwt.sub', $1, true)`, [payload.sub]);
-      await client.query(`SET ROLE authenticated`);
-    } catch {}
-  } else if (req.apiKey.keyType === "service_role") {
-    // service_role bypasses RLS — uses a dedicated role (must be created during setup: CREATE ROLE truss_service NOLOGIN; GRANT ... TO truss_service;)
-    try { await client.query(`SET LOCAL role = 'truss_service'`); } catch {}
+      payload = JSON.parse(Buffer.from(jwt.split(".")[1] || "", "base64url").toString());
+    } catch {
+      throw new Error("Malformed bearer token");
+    }
+    await client.query(`SELECT set_config('request.jwt.claims', $1, true)`, [JSON.stringify(payload)]);
+    if (payload?.sub) await client.query(`SELECT set_config('request.jwt.sub', $1, true)`, [String(payload.sub)]);
+    await client.query(`SET ROLE authenticated`);
+  } else {
+    await client.query(`SET ROLE anon`);
+  }
+}
+
+// Runs fn(client) inside a transaction with the RLS role applied, so every data-plane query
+// executes under anon/authenticated (RLS-enforced) or the owner (service_role). Replaces the
+// old pool.query() calls, which ran on the pool's owner role and bypassed RLS.
+async function withRlsClient(req, fn) {
+  const pool = getCustomerPool(req);
+  if (!pool) { const e = new Error("DATABASE_URL is not set."); e.statusCode = 500; throw e; }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET LOCAL statement_timeout = '15000'");
+    await applyRlsContext(client, req);
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
   }
 }
 
@@ -335,7 +363,7 @@ router.get("/v1/db/:table", apiKeyAuth, async (req, res) => {
   params.push(limit, offset);
 
   try {
-    const result = await getCustomerPool(req).query(sql, params);
+    const result = await withRlsClient(req, (c) => c.query(sql, params));
     res.set("Content-Range", `${offset}-${offset + result.rows.length}/*`);
     return res.json(result.rows);
   } catch (error) {
@@ -367,7 +395,7 @@ router.post("/v1/db/:table", apiKeyAuth, async (req, res) => {
   const sql = `INSERT INTO ${quoteIdent(table)} (${colList}) VALUES ${valueGroups.join(", ")} RETURNING *`;
 
   try {
-    const result = await getCustomerPool(req).query(sql, params);
+    const result = await withRlsClient(req, (c) => c.query(sql, params));
     return res.status(201).json(result.rows);
   } catch (error) {
     return res.status(400).json({ error: error.message, code: error.code || null });
@@ -411,7 +439,7 @@ router.patch("/v1/db/:table", apiKeyAuth, async (req, res) => {
   const sql = `UPDATE ${quoteIdent(table)} SET ${setClauses.join(", ")} WHERE ${conditions.join(" AND ")} RETURNING *`;
 
   try {
-    const result = await getCustomerPool(req).query(sql, params);
+    const result = await withRlsClient(req, (c) => c.query(sql, params));
     return res.json(result.rows);
   } catch (error) {
     return res.status(400).json({ error: error.message, code: error.code || null });
@@ -447,7 +475,7 @@ router.delete("/v1/db/:table", apiKeyAuth, async (req, res) => {
   const sql = `DELETE FROM ${quoteIdent(table)} WHERE ${conditions.join(" AND ")} RETURNING *`;
 
   try {
-    const result = await getCustomerPool(req).query(sql, params);
+    const result = await withRlsClient(req, (c) => c.query(sql, params));
     return res.json(result.rows);
   } catch (error) {
     return res.status(400).json({ error: error.message, code: error.code || null });
@@ -470,9 +498,10 @@ router.post("/v1/db/rpc/:function", apiKeyAuth, async (req, res) => {
 
   const client = await getCustomerPool(req).connect();
   try {
-    // Wrap in transaction so SET LOCAL is scoped to this request only
+    // Wrap in transaction so SET LOCAL / SET ROLE is scoped to this request only
     await client.query("BEGIN");
     await client.query("SET LOCAL statement_timeout = '15000'");
+    await applyRlsContext(client, req); // enforce RLS (anon/authenticated) or owner (service_role)
     const result = await client.query(sql, params);
     await client.query("COMMIT");
     return res.json(result.rows);
