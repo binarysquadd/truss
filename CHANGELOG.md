@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/binarysquadd/truss/compare/v0.4.0...v0.4.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **api:** create the anon/authenticated RLS roles on the main database at startup ([ffc0c85](https://github.com/binarysquadd/truss/commit/ffc0c851d3984e0f300d18634ab544a2fdd3095d))
+* finish the dashboard unprivileged-nginx migration to :8080 ([ebf2960](https://github.com/binarysquadd/truss/commit/ebf296075e028329bc980b59d130e0f4a8c0cb52))
+
 ## [0.4.0](https://github.com/binarysquadd/truss/compare/v0.3.0...v0.4.0) (2026-10-21)
 
 
