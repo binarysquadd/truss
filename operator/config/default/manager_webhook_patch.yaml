@@ -1,0 +1,32 @@
+# This patch mounts the webhook serving cert into the manager and opens the
+# webhook server port. The Secret is produced by the cert-manager Certificate
+# (serving-cert -> webhook-server-cert).
+
+# Mount the serving-cert Secret where controller-runtime's cert watcher reads it.
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts/-
+  value:
+    mountPath: /tmp/k8s-webhook-server/serving-certs
+    name: webhook-certs
+    readOnly: true
+
+# Tell the manager where the webhook cert lives.
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+
+# Expose the webhook server port.
+- op: add
+  path: /spec/template/spec/containers/0/ports/-
+  value:
+    containerPort: 9443
+    name: webhook-server
+    protocol: TCP
+
+# The serving-cert Secret as a volume.
+- op: add
+  path: /spec/template/spec/volumes/-
+  value:
+    name: webhook-certs
+    secret:
+      secretName: webhook-server-cert

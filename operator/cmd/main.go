@@ -36,7 +36,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	appsv1alpha1 "github.com/binarysquadd/truss/operator/api/v1alpha1"
+	appsv1beta1 "github.com/binarysquadd/truss/operator/api/v1beta1"
 	"github.com/binarysquadd/truss/operator/internal/controller"
+	webhookv1alpha1 "github.com/binarysquadd/truss/operator/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -49,6 +51,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(appsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(appsv1beta1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -185,6 +188,15 @@ func main() {
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "trussinstance")
 		os.Exit(1)
+	}
+
+	// Webhooks need a serving cert, so they're gated: set ENABLE_WEBHOOKS=false
+	// to run the operator locally (or in a cluster without cert-manager).
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		if err := webhookv1alpha1.SetupTrussInstanceWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "TrussInstance")
+			os.Exit(1)
+		}
 	}
 	// +kubebuilder:scaffold:builder
 

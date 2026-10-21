@@ -6,11 +6,7 @@ resources:
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
-# [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix.
-# patches here are for enabling the conversion webhook for each CRD
+# [WEBHOOK] Conversion webhook on the TrussInstance CRD (O9). The service
+# name/namespace + CA bundle are wired by replacements in config/default.
+- path: patches/webhook_in_trussinstances.yaml
 # +kubebuilder:scaffold:crdkustomizewebhookpatch
-
-# [WEBHOOK] To enable webhook, uncomment the following section
-# the following config is for teaching kustomize how to do kustomization for CRDs.
-#configurations:
-#- kustomizeconfig.yaml

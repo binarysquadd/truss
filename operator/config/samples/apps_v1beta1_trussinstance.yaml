@@ -1,0 +1,31 @@
+apiVersion: apps.truss.binarysquad.org/v1beta1
+kind: TrussInstance
+metadata:
+  labels:
+    app.kubernetes.io/name: operator
+    app.kubernetes.io/managed-by: kustomize
+  name: trussinstance-v1beta1-sample
+spec:
+  version: "0.2.0"
+  # v1beta1 renames publicURL -> host. Applying this and reading it back as
+  # v1alpha1 (kubectl get trussinstance.v1alpha1 ...) shows it as publicURL,
+  # proving the conversion webhook round-trips.
+  host: truss.binarysquad.org
+  components:
+    api:
+      replicas: 2
+    dashboard:
+      replicas: 2
+  dependencies:
+    postgres:
+      mode: managed
+    ory:
+      mode: byo
+      endpoints:
+        kratos: http://truss-kratos:4433
+        keto: http://truss-keto:4466
+  scaling:
+    profile: medium
+  ingress:
+    enabled: true
+    tls: true

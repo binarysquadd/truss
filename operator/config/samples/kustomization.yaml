@@ -2,4 +2,5 @@
 resources:
 - apps_v1alpha1_trussinstance.yaml
 - apps_v1alpha1_trussinstance_managed.yaml
+- apps_v1beta1_trussinstance.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
