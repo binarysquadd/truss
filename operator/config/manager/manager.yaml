@@ -21,7 +21,8 @@ spec:
     matchLabels:
       control-plane: controller-manager
       app.kubernetes.io/name: operator
-  replicas: 1
+  # HA: two replicas, one active via leader election, the other on hot standby.
+  replicas: 2
   template:
     metadata:
       annotations:
@@ -30,6 +31,18 @@ spec:
         control-plane: controller-manager
         app.kubernetes.io/name: operator
     spec:
+      # Spread the two replicas across nodes so one node failure can't take out
+      # both. Soft (preferred) so single-node clusters still schedule both pods.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  control-plane: controller-manager
+                  app.kubernetes.io/name: operator
       # TODO(user): Uncomment the following code to configure the nodeAffinity expression
       # according to the platforms which are supported by your solution.
       # It is considered best practice to support multiple architectures. You can
